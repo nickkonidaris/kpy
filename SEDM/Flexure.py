@@ -18,6 +18,8 @@ def shift_pixels(lam, n_pix):
 
     """
 
+    if n_pix == 0: return lam
+
     xx = np.arange(len(lam))
     pars = [1000., 239./240.0, 0.0, 1.0, 0.0]
     ok = np.isfinite(lam)

@@ -35,7 +35,9 @@ class SegmentationMap(object):
     SegMap = None # The segmentation map
     sky_spectrum = (None, None) # Sky spectrum (Wavelength, Spectrum)
         # sky spectrum is a per-spaxel spectrum
-
+    pixel_shift = 0 # The number of pixels to translate the spectra. pixel_shift
+        # is used for flexure correction and is measured from the spectra
+        # themselves.
 
     def __init__(self, segmap=None):
         ''' Loads the segmap, creates the KD Tree.
@@ -120,6 +122,9 @@ class SegmentationMap(object):
     def spectra_near_position(self, X, Y, distance=2):
         '''Returns all spectra within distance of (X,Y)
 
+        Notice spectra_* methods return all spectra, spectrum_* methods
+            convert spectra into a single spectrum.
+
         Args:
             X,Y: The X/Y position of the spectrum to extract in as
             distance: The extraction radius in arcsecond
@@ -138,10 +143,37 @@ class SegmentationMap(object):
         '''
 
         return Extract.spectra_near_position(self.KT, self.SegMap,
-                        X,Y, distance=distance, ixmap=self.OK)
+                        X,Y, distance=distance, ixmap=self.OK, 
+                        pixel_shift=self.pixel_shift)
 
+    def spectrum_near_position(self, X, Y, distance=2, onto=None, 
+                                sky_spec=None):
+        '''Interpolate spectra in a circle radius distance arround X,Y
+
+        See spectrum_near_position
+
+        Args: 
+            X,Y: The X/Y position of the central spectrum
+            small, large: the small and large radius of extraciton
+            onto: The wavelength grid to interpolate onto, None to ignore.
+            sky_spec: The sky spectrum to subtract
+
+        Returns:
+            {'wave_nm': wavelength of sky spectrum, 
+                'spec_adu', the median sky spectrum, 
+                'all_spec': and a matrix of spectra,
+                'num_spec': The number of spectra}'''
+
+        return Extract.interp_and_sum_spectra(
+                self.spectrum_near_position(X,Y, distance, 
+                    pixel_shift=self.pixel_shift),
+                onto=onto, sky_spec=sky_spec)
+        
     def spectra_in_annulus(self, X, Y, small=4, large=6):
         '''Returns all spectra in the annulus between radius small and large.
+
+        Notice spectra_* methods return all spectra, spectrum_* methods
+            convert spectra into a single spectrum.
 
         Args:
             X,Y: The X/Y position of the central spectrum
@@ -151,12 +183,14 @@ class SegmentationMap(object):
             List of spectra, see spectra_near_position'''
 
         return Extract.spectra_in_annulus(self.KT, self.SegMap,
-                X, Y, small=small, large=large, ixmap=self.OK)
+                X, Y, small=small, large=large, ixmap=self.OK, 
+                pixel_shift=self.pixel_shift)
 
     def spectrum_in_annulus(self, X, Y, small=4, large=6, onto=None):
         '''Returns the interpolated spectrum in an annulus arround X,Y
 
         See spectra_in_annulus
+
         Args: 
             X,Y: The X/Y position of the central spectrum
             small, large: the small and large radius of extraciton
@@ -170,6 +204,8 @@ class SegmentationMap(object):
 
         return Extract.interp_and_sum_spectra(
                 self.spectra_in_annulus(X,Y, small, large))
+                    
+                
             
 
     def sky_median(self, X=2, Y=10, distance=5):
@@ -189,12 +225,8 @@ class SegmentationMap(object):
             Stores the returned values into the class'''
 
        
-        res = Extract.sky_median(self.KT, self.SegMap, ixmap=self.OK)
+        res = Extract.sky_median(self.KT, self.SegMap, ixmap=self.OK,
+            pixel_shift=self.pixel_shift)
 
         return res
-            
-        
-
-
-
 

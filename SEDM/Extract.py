@@ -14,6 +14,8 @@ import scipy.signal
 import scipy.spatial
 from scipy.interpolate import interp1d
 
+from SEDM import Flexure as FF
+
 reload (IO)
 
 def lambda_to_dlambda(lam):
@@ -60,7 +62,8 @@ def segmap_to_kdtree(SegMap):
     kt = scipy.spatial.KDTree(np.array(data))
     return kt, oks
 
-def spectra_in_annulus(KT, SegMap, X, Y, small=200, large=300, ixmap=None):
+def spectra_in_annulus(KT, SegMap, X, Y, small=200, large=300, ixmap=None,
+                        pixel_shift=0):
     """Queries the KD tree for points within the annulus, returns the spectra.
 
     Args:
@@ -69,6 +72,8 @@ def spectra_in_annulus(KT, SegMap, X, Y, small=200, large=300, ixmap=None):
         X,Y: The X/Y position of the spectrum to extract
         small,large: The near and far distances of the annulus
         ixmap: The map of KT.data to SegMap
+        pixel_shift: For flexure correction, the number of pixels to shift
+            the wavelength solution
 
     Returns a list of (Wavelength, Spectra). E.g.:
         [   [array(365 .. 1000) , array( 50 .. 63)] ,
@@ -85,7 +90,9 @@ def spectra_in_annulus(KT, SegMap, X, Y, small=200, large=300, ixmap=None):
     results = []
     for index in in_annulus:
         ix = ixmap[index]
-        results.append( (SegMap[ix]['WaveCalib'][0][0],
+        lam = SegMap[ix]['WaveCalib'][0][0][:]
+        lam = FF.shift_pixels(lam, pixel_shift)
+        results.append( (lam,
                         SegMap[ix]['SpexSpecFit'][0][0],
                         ix))
 
@@ -93,7 +100,7 @@ def spectra_in_annulus(KT, SegMap, X, Y, small=200, large=300, ixmap=None):
 
 
 
-def sky_median(KT, SegMap, X=2, Y=10, distance=7, ixmap=None):
+def sky_median(KT, SegMap, X=2, Y=10, distance=7, ixmap=None, pixel_shift=0):
     """Generates a median spectrum estimating the "sky".
 
     Args:
@@ -101,6 +108,8 @@ def sky_median(KT, SegMap, X=2, Y=10, distance=7, ixmap=None):
         SegMap: The segmentation map
         X,Y: The X/Y position of the spectrum to extract. Default is middle.
         distance: Distance to the spaxel in pixels. Default is 900
+        pixel_shift: For flexure correction, the number of pixels to shift
+            the wavelength solution
 
     Returns:
         {'wave_nm': wavelength of sky spectrum, 
@@ -110,10 +119,12 @@ def sky_median(KT, SegMap, X=2, Y=10, distance=7, ixmap=None):
 
     """
 
-    specs = spectra_near_position(KT, SegMap, X, Y, distance, ixmap=None)
+    specs = spectra_near_position(KT, SegMap, X, Y, distance, ixmap=None,
+        pixel_shift=pixel_shift)
     return interp_and_sum_spectra(specs)
 
-def spectra_near_position(KT, SegMap, X, Y, distance=2, ixmap=None):
+def spectra_near_position(KT, SegMap, X, Y, distance=2, ixmap=None,
+                            pixel_shift = 0):
     """Queries the KD tree for points near the source, returns the spectra.
 
     Args:
@@ -122,6 +133,8 @@ def spectra_near_position(KT, SegMap, X, Y, distance=2, ixmap=None):
         X,Y: The X/Y position of the spectrum to extract
         distance: Distance to the spaxel in pixels. Default is 100
         ixmap: The mapping of index from KT.data to SegMap
+        pixel_shift: For flexure correction, the number of pixels to shift
+            the wavelength solution
 
     Returns a list of (Wavelength, Spectra, SegMap index). E.g.:
         [   [array(365 .. 1000) , array( 50 .. 63)] ,
@@ -140,7 +153,10 @@ def spectra_near_position(KT, SegMap, X, Y, distance=2, ixmap=None):
         ix = ixmap[index]
         if len(SegMap[ix]['WaveCalib'][0]) == 0:
             continue
-        results.append( (SegMap[ix]['WaveCalib'][0][0],
+        lam = SegMap[ix]['WaveCalib'][0][0][:]
+        lam = FF.shift_pixels(lam, pixel_shift)
+
+        results.append( (lam,
                         SegMap[ix]['SpexSpecFit'][0][0], 
                         ix))
 
@@ -166,10 +182,10 @@ def interp_and_sum_spectra(specs, sky_spec = None, onto=None):
     """
 
     # for now, assume the first spectrum has a good wavelength range
-    # TODO: fix the above
+    # TODO: challenge assumption in comment above
 
-    wave = np.array(specs[0][0])[::-1]
-    spec = np.array(specs[0][1])[::-1]
+    wave = specs[0][0][::-1]
+    spec = specs[0][1][::-1]
     minw = np.nanmin(wave)
     maxw = np.nanmax(wave)
 
@@ -187,7 +203,7 @@ def interp_and_sum_spectra(specs, sky_spec = None, onto=None):
         skyf = interp1d(sky_wave, sky_spec/dlamsky, 
             bounds_error=False, fill_value=0.0)
 
-    nspec = np.zeros(len(spec), dtype=np.int)
+    nspec = np.ones(len(spec), dtype=np.int)
     for i in xrange(1, len(specs)):
         lam = specs[i][0][::-1]
         ss = specs[i][1][::-1]
@@ -203,21 +219,20 @@ def interp_and_sum_spectra(specs, sky_spec = None, onto=None):
             continue
 
         interp_fun = interp1d(lam[ok], ss[ok], bounds_error=False,
-            fill_value = 0.0)
+            fill_value = np.nan)
 
         if sky_spec is None:
             the_spec = interp_fun(wave)
         else:
             the_spec = interp_fun(wave) - skyf(wave)*dlamf(wave)
 
-        spec += the_spec
         all[:,i] = the_spec
-            
 
-        nspec[np.isfinite(the_spec)] += 1
+        ok2 = np.isfinite(the_spec)
+        nspec[ok2] += 1
 
     return  {'wave_nm': wave,
-        'spec_adu': spec,
+        'spec_adu': np.nansum(all, axis=1),
         'num_spec': nspec,
         'all_spec': all}
 
@@ -248,9 +263,11 @@ def segmap_to_img(SegMap, sky_spec=None, minl=400, maxl=850):
         sky_wave, sky_spec = sky_spec
         dlamsky = lambda_to_dlambda(sky_wave)
 
-        skyf = interp1d(sky_wave, sky_spec/dlamsky, bounds_error=False)
+        skyf = interp1d(sky_wave, sky_spec/dlamsky, bounds_error=False,
+            fill_value=0.0)
 
-        dlamskyf = interp1d(sky_wave, dlamsky)
+        dlamskyf = interp1d(sky_wave, dlamsky, bounds_error=False,
+            fill_value=0.0)
 
         minw = np.nanmin(sky_wave)
         maxw = np.nanmax(sky_wave)
