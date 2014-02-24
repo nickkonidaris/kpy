@@ -111,16 +111,68 @@ class SegmentationMap(object):
         Y = self.SegMap[ix]['OnSkyY'][0][0][0]
 
         print X,Y
-        spectra = Extract.spectra_near_position(self.KT, self.SegMap,
-                                        X,Y,
+
+        spectra = self.spectra_near_position( X,Y,
                                         distance=distance)
 
         return spectra
 
-    def spectra_near_position(
-        # NEXT STEP IS HERE
+    def spectra_near_position(self, X, Y, distance=2):
+        '''Returns all spectra within distance of (X,Y)
 
-    def sky_median(self, X=2, Y=10, distance=7):
+        Args:
+            X,Y: The X/Y position of the spectrum to extract in as
+            distance: The extraction radius in arcsecond
+
+        Returns a list of (wavelength, spectra, index). E.g.:
+            [[array(365...1000) , array(50 .. 63), 950] ..]
+
+        Example:
+            import SegMap as SM
+            sm = SM.SegmentationMap("/path/b_ifu20130808_23_08_44.fits_SI.mat")
+            spec = sm.spectra_near_position(5, 5)
+            print len (spec)
+                >> 34
+            ll, ss = spec[0][0], spec[0][1]
+            plot(ll, ss) # Plots the spectrum
+        '''
+
+        return Extract.spectra_near_position(self.KT, self.SegMap,
+                        X,Y, distance=distance, ixmap=self.OK)
+
+    def spectra_in_annulus(self, X, Y, small=4, large=6):
+        '''Returns all spectra in the annulus between radius small and large.
+
+        Args:
+            X,Y: The X/Y position of the central spectrum
+            small,large: The small and large radius of extraction
+
+        Returns:
+            List of spectra, see spectra_near_position'''
+
+        return Extract.spectra_in_annulus(self.KT, self.SegMap,
+                X, Y, small=small, large=large, ixmap=self.OK)
+
+    def spectrum_in_annulus(self, X, Y, small=4, large=6, onto=None):
+        '''Returns the interpolated spectrum in an annulus arround X,Y
+
+        See spectra_in_annulus
+        Args: 
+            X,Y: The X/Y position of the central spectrum
+            small, large: the small and large radius of extraciton
+            onto: The wavelength grid to interpolate onto, None to ignore.
+
+        Returns:
+            {'wave_nm': wavelength of sky spectrum, 
+                'spec_adu', the median sky spectrum, 
+                'all_spec': and a matrix of spectra,
+                'num_spec': The number of spectra}'''
+
+        return Extract.interp_and_sum_spectra(
+                self.spectra_in_annulus(X,Y, small, large))
+            
+
+    def sky_median(self, X=2, Y=10, distance=5):
         '''Generates a sky spectrum from the median of a large sky area.
 
         Args:
@@ -137,7 +189,7 @@ class SegmentationMap(object):
             Stores the returned values into the class'''
 
        
-        res = Extract.sky_median(self.KT, self.SegMap)
+        res = Extract.sky_median(self.KT, self.SegMap, ixmap=self.OK)
 
         return res
             

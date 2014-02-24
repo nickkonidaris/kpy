@@ -60,7 +60,7 @@ def segmap_to_kdtree(SegMap):
     kt = scipy.spatial.KDTree(np.array(data))
     return kt, oks
 
-def spectra_in_annulus(KT, SegMap, X, Y, small=200, large=300):
+def spectra_in_annulus(KT, SegMap, X, Y, small=200, large=300, ixmap=None):
     """Queries the KD tree for points within the annulus, returns the spectra.
 
     Args:
@@ -68,6 +68,7 @@ def spectra_in_annulus(KT, SegMap, X, Y, small=200, large=300):
         SegMap: The segmentation map
         X,Y: The X/Y position of the spectrum to extract
         small,large: The near and far distances of the annulus
+        ixmap: The map of KT.data to SegMap
 
     Returns a list of (Wavelength, Spectra). E.g.:
         [   [array(365 .. 1000) , array( 50 .. 63)] ,
@@ -78,17 +79,21 @@ def spectra_in_annulus(KT, SegMap, X, Y, small=200, large=300):
     near = set(KT.query_ball_point( (X, Y), small))
     far = set(KT.query_ball_point( (X, Y), large))
 
+    if ixmap is None: ixmap = range(len(SegMap))
+
     in_annulus = far.difference(near)
     results = []
-    for ix in in_annulus:
+    for index in in_annulus:
+        ix = ixmap[index]
         results.append( (SegMap[ix]['WaveCalib'][0][0],
-                        SegMap[ix]['SpexSpecFit'][0][0]))
+                        SegMap[ix]['SpexSpecFit'][0][0],
+                        ix))
 
     return results
 
 
 
-def sky_median(KT, SegMap, X=2, Y=10, distance=7):
+def sky_median(KT, SegMap, X=2, Y=10, distance=7, ixmap=None):
     """Generates a median spectrum estimating the "sky".
 
     Args:
@@ -105,42 +110,10 @@ def sky_median(KT, SegMap, X=2, Y=10, distance=7):
 
     """
 
-    ixs = KT.query_ball_point( (X, Y), distance)
+    specs = spectra_near_position(KT, SegMap, X, Y, distance, ixmap=None)
+    return interp_and_sum_spectra(specs)
 
-    wave = SegMap[ixs[0]]['WaveCalib'][0][0][::-1]
-    minw = np.nanmin(wave)
-    maxw = np.nanmax(wave)
-    specs = np.zeros((len(wave), len(ixs)))
-    specs[:, 0] = SegMap[ixs[0]]['SpexSpecFit'][0][0][::-1]
-
-    dlam0 = lambda_to_dlambda(wave)
-
-    n_spec = 0
-    for i in xrange(1, len(ixs)):
-        ix = ixs[i]
-        if len(SegMap[ix]['WaveCalib'][0]) == 0: continue
-        lam = SegMap[ix]['WaveCalib'][0][0][::-1]
-        ss = SegMap[ix]['SpexSpecFit'][0][0][::-1]
-
-        ok = np.isfinite(lam) & np.isfinite(ss) & \
-            (lam > minw) & (lam < maxw)
-        if not np.any(ok):
-            print "passing"
-            continue
-
-        dlam = lambda_to_dlambda(lam)
-        sdlam = ss/dlam
-        interp_fun = interp1d(lam[ok], sdlam[ok], bounds_error=False, fill_value =0.0)
-
-        specs[:, i] = interp_fun(wave)*dlam0
-        n_spec += 1
-
-    return {'wave_nm': wave, 
-            'spec_adu': np.median(specs,axis=1), 
-            'all_spec': specs, 
-            'num_spec': n_spec}
-
-def spectra_near_position(KT, SegMap, X, Y, distance=2):
+def spectra_near_position(KT, SegMap, X, Y, distance=2, ixmap=None):
     """Queries the KD tree for points near the source, returns the spectra.
 
     Args:
@@ -148,8 +121,9 @@ def spectra_near_position(KT, SegMap, X, Y, distance=2):
         SegMap: The segmentation map
         X,Y: The X/Y position of the spectrum to extract
         distance: Distance to the spaxel in pixels. Default is 100
+        ixmap: The mapping of index from KT.data to SegMap
 
-    Returns a list of (Wavelength, Spectra). E.g.:
+    Returns a list of (Wavelength, Spectra, SegMap index). E.g.:
         [   [array(365 .. 1000) , array( 50 .. 63)] ,
             [array(366 .. 1001) , array( 53 .. 61)] ,
             ]
@@ -158,8 +132,14 @@ def spectra_near_position(KT, SegMap, X, Y, distance=2):
 
     ixs = KT.query_ball_point( (X, Y), distance)
 
+    if ixmap is None:
+        ixmap = range(len(SegMap))
+
     results = []
-    for ix in ixs:
+    for index in ixs:
+        ix = ixmap[index]
+        if len(SegMap[ix]['WaveCalib'][0]) == 0:
+            continue
         results.append( (SegMap[ix]['WaveCalib'][0][0],
                         SegMap[ix]['SpexSpecFit'][0][0], 
                         ix))
@@ -207,31 +187,34 @@ def interp_and_sum_spectra(specs, sky_spec = None, onto=None):
         skyf = interp1d(sky_wave, sky_spec/dlamsky, 
             bounds_error=False, fill_value=0.0)
 
-    nspec = 1
-    for i in xrange(0, len(specs)):
-        lam, ss = specs[i]
-        lam = lam[::-1]
+    nspec = np.zeros(len(spec), dtype=np.int)
+    for i in xrange(1, len(specs)):
+        lam = specs[i][0][::-1]
+        ss = specs[i][1][::-1]
+
         dlam = lambda_to_dlambda(lam)
         dlamf = interp1d(lam, dlam, bounds_error=False,
             fill_value=0.0)
 
-        ss = ss[::-1]
         ok = np.isfinite(lam) & np.isfinite(ss) & \
             (lam > minw) & (lam < maxw)
         if not np.any(ok):
             print "passing"
             continue
 
-        interp_fun = interp1d(lam[ok], ss[ok], bounds_error=False)
+        interp_fun = interp1d(lam[ok], ss[ok], bounds_error=False,
+            fill_value = 0.0)
 
         if sky_spec is None:
-            spec = spec + interp_fun(wave)
-            all[:,i] = interp_fun(wave)
+            the_spec = interp_fun(wave)
         else:
-            spec = spec + interp_fun(wave) - skyf(wave)*dlamf(wave)
-            all[:,i] = interp_fun(wave) - skyf(wave)*dlamf(wave)
+            the_spec = interp_fun(wave) - skyf(wave)*dlamf(wave)
+
+        spec += the_spec
+        all[:,i] = the_spec
             
-        nspec += 1
+
+        nspec[np.isfinite(the_spec)] += 1
 
     return  {'wave_nm': wave,
         'spec_adu': spec,
