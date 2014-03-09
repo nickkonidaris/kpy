@@ -3,27 +3,149 @@ SegmentationMap class wraps around several functions in SEDM package and
 provides a convenient way to handle SEDM data.
 '''
 
-import numpy
+import datetime
+import numpy as np
+import json
 import scipy.io
-import pylab as pl
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as pl
+from matplotlib.backend_bases import KeyEvent 
+from matplotlib.backend_bases import PickEvent
 
 
 import Extract
 
 reload(Extract)
 
-picked_points = None
-artist = None
+class PositionPicker(object):
+    '''Shows the IFU field and allows the user to select an object.
+
+    '''
+
+    index = 0   # index into the file list
+    filelist = []
+    subtract_sky = True
+    picked = []
+    outfile = None
+
+    def __init__(self,filelist):
+        print "Starting picker GUI"
+        self.filelist = filelist
+        self.fig = pl.figure(1)
+        
+        self.fig.canvas.mpl_connect("key_press_event", self)
+        self.fig.canvas.mpl_connect("pick_event", self)
+
+        self.index = 0
+        self.load()
+        self.draw()
+
+    def dump(self):
+        """Write status to file"""
+
+        dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print "Writing to: %s" % self.outfile
+        str = json.dumps({"outfile": self.outfile,
+                        "infile": self.filelist[self.index],
+                        "spec": self.picked,
+                        "status": self.status,
+                        "when": dt}, indent=4)
+
+        try:
+            f=open(self.outfile, "w")
+            f.write(str)
+            f.close()
+        except Exception as e:
+            raise("Could not write %s: %s" % (self.outfile, e))
+
+    def load(self):
+        """Load the Segmentation map"""
+
+        pl.figure(1)
+        pl.clf()
+        if self.index < 0: self.index =0
+        if self.index > len(self.filelist): index = len(self.filelist)-1
+
+        self.picked = []
+        self.SM = SegmentationMap(self.filelist[self.index])
+
+        self.outfile = self.filelist[self.index].rstrip("fits_SI.mat") + \
+                        ".coords.json"
+        print "Loaded"
+
+    def __call__(self, event):
+        '''Event call handler for Picker gui.'''
+
+        if event.name == 'pick_event':
+            self.picked = self.SM.OK[event.ind[0]]
+            pl.title("[1] Clicked on %s. [2] Press q to exit." % event.ind)
+
+        elif event.name == 'key_press_event':
+            if event.key == 'n': 
+                print "next"
+                self.index += 1
+                self.load()
+                self.draw()
+            if event.key == 'p': 
+                print "prev"
+                self.index -= 1
+                self.load()
+                self.draw()
+            if event.key == '-':
+                print "Substract sky: %s" % self.subtract_sky
+                self.subtract_sky = not self.subtract_sky
+                self.draw()
+            if event.key == "u":
+                self.status = "unsure"
+                self.dump()
+            if event.key == "b":
+                self.status = "bad"
+                self.dump()
+            if event.key == "o":
+                self.status = "ok"
+                self.dump()
+
+            if event.key == 'h':
+                print """Help---
+n - next
+p - prev
+- - subtract sky
+u - unsure: there are targets visible, not sure which is correct.
+b - bad: nothing visible
+o - ok: target visible
+"""
+            print event.key
+            
+
+    def draw(self):
+        if self.subtract_sky:
+            sky = self.SM.sky_median()
+            sky_spec = sky['wave_nm'], sky['spec_adu']/sky['num_spec']
+        else:
+            sky_spec = None
+
     
-def pick_handler(event):
-    global picked_points,artist
+        x,y,v = Extract.segmap_to_img(self.SM.SegMap, sky_spec=sky_spec)
+        self.Xs = x
+        self.Ys = y
+        self.Values = v
 
-    mouseevent = event.mouseevent
-    artist = event.artist
 
-    picked_points = event.ind
-    print "Picked: %s" % picked_points
+        pl.ion()
+        pl.figure(1, figsize=(9,8))
+        pl.clf()
+        pl.xlim(-12,17)
+        pl.ylim(-7,27)
+        pl.title("[1] Click on an object. [2] Label as [g]ood, [u]nsure, [n]othing visible. [3] Goto [n]ext/[p]rev object")
+
+        pl.scatter(self.Xs,
+                    self.Ys,
+                    c=self.Values,
+                    s=60,
+                    picker=0.5,
+                    marker='h')
+
+        
+        pl.colorbar()
 
 class SegmentationMap(object):
     KT = None # KD Tree
@@ -46,6 +168,7 @@ class SegmentationMap(object):
             segmap: Either a filename or a segmentation map array '''
         
         if type(segmap) == str:
+            print "Loading: %s" % segmap
             mat = scipy.io.loadmat(segmap)
             self.SegMap = mat['SegmentsInfo']
         else:
@@ -53,24 +176,52 @@ class SegmentationMap(object):
 
         self.KT, self.OK = Extract.segmap_to_kdtree(self.SegMap)
     
+    def subtract(self, B):
+        '''Subtracts B.SegMap from current SegMap.
+
+        sm.substract(B) has side effects and overwrites the segmap in self
+
+        Args:
+            B: The SegmentationMap object to subtract off
+
+        Returns:
+            Nothing, but has side effects.'''
+
     
+        if len(self.SegMap) != len(B.SegMap):
+            raise Exception("Mismatched segmentation maps")
+
+        for i in xrange(len(self.SegMap)):
+
+            try:
+                w = self.SegMap[i]['WaveCalib'][0][0]
+            except:
+                continue
+
+            ok = np.isfinite(w) & np.isfinite(B.SegMap[i]['WaveCalib'][0][0])
+            if np.any(w[ok] != B.SegMap[i]['WaveCalib'][0][0][ok]):
+                raise Exception("Mismatched segmentation maps, wave")
+
+            d = self.SegMap[i]['SpexSpecFit'][0][0] \
+                    -  B.SegMap[i]['SpexSpecFit'][0][0]
+
+            self.SegMap[i]['SpexSpecFit'][0][0] = d
+
     def draw(self, figure_number=1, minl=450, maxl=800, 
-        subtract_sky=False):
+        subtract_sky=False, outfile=None):
         '''Draw a figure showing the segmentation map cube
         
         Args:
             figure_number: Plot figure number
             minl/maxl: Minimum/Maximum wavelength to sum over
+            outfile: The path to the output file
         
         Returns:
             Nothing
             
         Side Effects:
             Plots a new figure(figure_number) with the data cube.
-            global picked_points will be updated with the picked points'''
-
-        global picked_points
-        picked_points = None
+        '''
 
         sky_spec = None
         if subtract_sky:
@@ -81,14 +232,10 @@ class SegmentationMap(object):
         x,y,v = Extract.segmap_to_img(self.SegMap, minl=minl, maxl=maxl, 
             sky_spec=sky_spec)
 
-        fig = plt.figure(figure_number, figsize=(8,7))
-        ax = fig.add_subplot(111)
-        plt.clf()
-        plt.scatter(x,y,c=v,s=60, picker=True, marker='h')
-        plt.ylim(-7,27)
-        plt.xlim(-12,17)
-        fig.canvas.mpl_connect('pick_event', pick_handler)
-        plt.show()
+        fig = pl.figure(figure_number, figsize=(9,8))
+        pl.xlim(-12, 17)
+        pl.ylim(-7, 27)
+        pl.scatter(x,y,c=v, s=60, picker=0.5, marker='h')
 
     def select_circle(self, center_xs, distance=2):
         '''
@@ -165,8 +312,7 @@ class SegmentationMap(object):
                 'num_spec': The number of spectra}'''
 
         return Extract.interp_and_sum_spectra(
-                self.spectrum_near_position(X,Y, distance, 
-                    pixel_shift=self.pixel_shift),
+                self.spectra_near_position(X,Y, distance),
                 onto=onto, sky_spec=sky_spec)
         
     def spectra_in_annulus(self, X, Y, small=4, large=6):
