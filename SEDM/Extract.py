@@ -38,21 +38,25 @@ def lambda_to_dlambda(lam):
 
 
 
-def segmap_to_kdtree(SegMap):
+def segmap_to_kdtree(SegMap, positions=('OnSkyX','OnSkyY'),
+        signal_field='SpexSpecFit'):
     """Creates a segmentation map KD Tree
 
     Args:
         SegMap: The segmentation map
+        positions: The position of the trace in either arcsec ('OnSkyX',
+            'OnSkyY') or pixels ('MeanX', 'MeanY')
 
     Returns a scipy.spatial.KDTree
     """
     data = []
     oks = []
+    print positions
     for i in xrange(len(SegMap)):
         seg = SegMap[i][0]
 
-        x = seg['OnSkyX'][0][0]
-        y = seg['OnSkyY'][0][0]
+        x = seg[positions[0]][0][0]
+        y = seg[positions[1]][0][0]
 
         if np.isfinite(x) and np.isfinite(y):
             oks.append(i)
@@ -237,7 +241,8 @@ def interp_and_sum_spectra(specs, sky_spec = None, onto=None):
         'all_spec': all}
 
 
-def segmap_to_img(SegMap, sky_spec=None, minl=400, maxl=850):
+def segmap_to_img(SegMap, sky_spec=None, minl=400, maxl=850,
+    signal_field='SpexSpecFit', positions=('OnSkyX', 'OnSkyY')):
     """Take seg.Mean[XY] and return an image of the Segmentation Map.
     
     Creates a tesselated hexagon image of the segmentation map. 
@@ -249,6 +254,10 @@ def segmap_to_img(SegMap, sky_spec=None, minl=400, maxl=850):
             from the spectrum before summing.   
         minl/maxl: The minimum and maximum wavelength over which to take
             the median
+        signal_field: String containing the field to extract signal from
+            defaults to SpexSpecFit, could also be SpexSpecCenter
+        positions: The position of the trace in either arcsec ('OnSkyX',
+            'OnSkyY') or pixels ('MeanX', 'MeanY')
 
     Returns:
         A three-tuple of numpy array. Format is (X positions, Y positions, Values)
@@ -260,6 +269,7 @@ def segmap_to_img(SegMap, sky_spec=None, minl=400, maxl=850):
     Ys = []
     Values = []
     if sky_spec is not None:
+        print "Subtracting sky in creating image"
         sky_wave, sky_spec = sky_spec
         dlamsky = lambda_to_dlambda(sky_wave)
 
@@ -271,24 +281,28 @@ def segmap_to_img(SegMap, sky_spec=None, minl=400, maxl=850):
 
         minw = np.nanmin(sky_wave)
         maxw = np.nanmax(sky_wave)
-        
+    
+    pl.figure(2)
+    pl.clf()
+ 
     for i in xrange(len(SegMap)):
         seg = SegMap[i][0]
     
         if len(seg['WaveCalib']) == 0: continue
 
         wave = seg['WaveCalib'][0][::-1]
-        spec = seg['SpexSpecFit'][0][::-1]
+        spec = seg[signal_field][0][::-1]
 
         if len(wave) < 10: continue
 
+
         roi = (wave > minl) & (wave < maxl)
 
-        Xs.append(seg['OnSkyX'][0][0])
-        Ys.append(seg['OnSkyY'][0][0])
+        Xs.append(seg[positions[0]][0][0])
+        Ys.append(seg[positions[1]][0][0])
 
         if sky_spec is None:
-            Values.append(np.median(spec[roi]))
+            Values.append(np.sum(spec[roi]))
         else:
             try:
                 ok = np.isfinite(wave) & np.isfinite(spec) & \
@@ -298,9 +312,10 @@ def segmap_to_img(SegMap, sky_spec=None, minl=400, maxl=850):
                 import pdb
                 pdb.set_trace()
             if not np.any(ok):
-                Values.append(np.median(skyf(wave)))
+                Values.append(np.sum(skyf(wave)))
                 continue
             
+        
             dlam = lambda_to_dlambda(wave)
             local_sky = skyf(wave) * dlamskyf(wave)
 
@@ -318,6 +333,7 @@ def cub_to_img(cub):
     skys = med_spec(cub)
 
     img = np.zeros((shp[1], shp[2]))
+
 
     for i in xrange(shp[1]):
         for j in xrange(shp[2]):

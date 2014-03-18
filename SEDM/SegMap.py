@@ -6,15 +6,19 @@ provides a convenient way to handle SEDM data.
 import datetime
 import numpy as np
 import json
+import pyfits
 import scipy.io
 import matplotlib.pyplot as pl
 from matplotlib.backend_bases import KeyEvent 
 from matplotlib.backend_bases import PickEvent
 
+import Disp
+
 
 import Extract
 
 reload(Extract)
+reload(Disp)
 
 class PositionPicker(object):
     '''Shows the IFU field and allows the user to select an object.
@@ -26,14 +30,23 @@ class PositionPicker(object):
     subtract_sky = True
     picked = []
     outfile = None
+    olines  = [372.7, 486.1, 500.7, 656.3]
+    tlines = [761.5, 589.0, 557.7, 435.8, 519.9, 630.0]
+    pixel_shift = 0
+    positions=None
 
-    def __init__(self,filelist):
+    def __init__(self,filelist,positions=('OnSkyX','OnSkyY')):
         print "Starting picker GUI"
         self.filelist = filelist
+        self.positions=positions
         self.fig = pl.figure(1)
-        
+
         self.fig.canvas.mpl_connect("key_press_event", self)
         self.fig.canvas.mpl_connect("pick_event", self)
+
+        self.fig2 = pl.figure(2)
+        self.fig2.canvas.mpl_connect("key_press_event", self)
+        self.fig2.canvas.mpl_connect("pick_event", self)
 
         self.index = 0
         self.load()
@@ -48,6 +61,7 @@ class PositionPicker(object):
                         "infile": self.filelist[self.index],
                         "spec": self.picked,
                         "status": self.status,
+                        "pixel_shift": self.pixel_shift,
                         "when": dt}, indent=4)
 
         try:
@@ -66,20 +80,102 @@ class PositionPicker(object):
         if self.index > len(self.filelist): index = len(self.filelist)-1
 
         self.picked = []
-        self.SM = SegmentationMap(self.filelist[self.index])
+        self.pixel_shift = 0
+        self.SM = SegmentationMap(self.filelist[self.index],
+            positions=self.positions)
+
+        try: reg_txt = Disp.ds92(self.SM.SegMap)
+        except: pass
+
+        try:
+            outreg = self.filelist[self.index].rstrip("fits_SI.mat") + \
+                        ".reg"
+            f = open(outreg, "w")
+            f.write(reg_txt)
+            f.close()
+        except:
+            print "Could not write reg file"
 
         self.outfile = self.filelist[self.index].rstrip("fits_SI.mat") + \
                         ".coords.json"
         print "Loaded"
+
+    def draw_spectrum(self):
+        ''' Draw the spectrum in figure(2) '''
+
+        pl.figure(2)
+        pl.clf()
+        if self.picked == []: return
+        self.SM.pixel_shift = self.pixel_shift
+
+        seg_to_extract = self.SM.SegMap[self.picked][0]
+
+        X = seg_to_extract[self.positions[0]][0][0]
+        Y = seg_to_extract[self.positions[1]][0][0]
+
+        sky_spec = self.SM.spectrum_in_annulus(X,Y)
+        wave = sky_spec["wave_nm"]
+        sky = (wave, sky_spec["spec_adu"]/sky_spec["num_spec"])
+
+        obj_spec = self.SM.spectrum_near_position(X,Y, onto=wave)
+
+
+        pl.xlabel("wavelength [nm]")
+        spec = obj_spec["spec_adu"]
+
+        if self.subtract_sky:
+            spec -= sky[1]*obj_spec["num_spec"]
+
+        self.sky_spec = sky
+        self.obj_spec = (wave, spec)
+
+        pl.step(wave, spec)
+        pl.step(wave, sky[1]*obj_spec["num_spec"],'r')
+
+        pl.legend(["object","sky"])
+        pl.xlim(350,1000)
+
+        for line in self.olines:
+            pl.axvline(line)
+        for line in self.tlines:
+            pl.axvline(line, color='r')
+
+    def handle_shift(self, xdata, ydata):
+
+        if (xdata < 360) or (xdata > 1000): return
+
+        lines = np.concatenate((self.olines, self.tlines))
+
+        print lines
+        delts = (lines - xdata)
+        ix = np.argmin(np.abs(delts))
+        print "Closest to %f" % lines[ix]
+        
+        line = lines[ix]
+        delt = delts[ix]
+        wave = self.sky_spec[0]
+
+        wix = np.nanargmin(np.abs(wave-line))
+        dw = wave[wix]-wave[wix-1]
+        print "Delt: {0}, dw: {1}".format(delt, dw)
+        self.pixel_shift += delt/dw
+
+        print "pixel shift is: {0}".format(self.pixel_shift)
+        self.draw_spectrum()
 
     def __call__(self, event):
         '''Event call handler for Picker gui.'''
 
         if event.name == 'pick_event':
             self.picked = self.SM.OK[event.ind[0]]
-            pl.title("[1] Clicked on %s. [2] Press q to exit." % event.ind)
+            pl.figure(1)
+            self.draw()
 
         elif event.name == 'key_press_event':
+            if event.key == '\\':
+                print "Shifting"
+                self.handle_shift(event.xdata, event.ydata)
+
             if event.key == 'n': 
                 print "next"
                 self.index += 1
@@ -91,8 +187,8 @@ class PositionPicker(object):
                 self.load()
                 self.draw()
             if event.key == '-':
-                print "Substract sky: %s" % self.subtract_sky
                 self.subtract_sky = not self.subtract_sky
+                print "Substract sky: %s" % self.subtract_sky
                 self.draw()
             if event.key == "u":
                 self.status = "unsure"
@@ -124,28 +220,39 @@ o - ok: target visible
             sky_spec = None
 
     
-        x,y,v = Extract.segmap_to_img(self.SM.SegMap, sky_spec=sky_spec)
+        x,y,v = Extract.segmap_to_img(self.SM.SegMap, sky_spec=sky_spec,
+            minl=546.1, maxl=579.1,positions=self.positions)
         self.Xs = x
         self.Ys = y
         self.Values = v
 
+        pl.figure(1, figsize=(9,8))
 
         pl.ion()
-        pl.figure(1, figsize=(9,8))
         pl.clf()
-        pl.xlim(-12,17)
-        pl.ylim(-7,27)
-        pl.title("[1] Click on an object. [2] Label as [g]ood, [u]nsure, [n]othing visible. [3] Goto [n]ext/[p]rev object")
+    
+        try: fname = self.filelist[self.index].split("/")[-1]
+        except: fname = "???"
+        try: 
+            fitsname = self.filelist[self.index]
+            fitsname = fitsname.replace("shrunk_","").rstrip("_SI.mat")
 
+            header = pyfits.getheader(fitsname)
+            name = header['OBJECT']
+        except: name = "???"
+
+        pl.title("{0}/{1}".format(name, fname))
         pl.scatter(self.Xs,
                     self.Ys,
                     c=self.Values,
                     s=60,
                     picker=0.5,
                     marker='h')
-
-        
         pl.colorbar()
+
+
+        self.draw_spectrum()
+        
 
 class SegmentationMap(object):
     KT = None # KD Tree
@@ -161,7 +268,11 @@ class SegmentationMap(object):
         # is used for flexure correction and is measured from the spectra
         # themselves.
 
-    def __init__(self, segmap=None):
+    positions=None # Use OnSky? or Mean? from the SegmentationMap
+    signal_field=None # Use SpexSpecFit or SpexSpecCenter
+
+    def __init__(self, segmap=None, positions=('OnSkyX', 'OnSkyY'),
+        signal_field='SpexSpecFit'):
         ''' Loads the segmap, creates the KD Tree.
 
         Args:
@@ -174,7 +285,10 @@ class SegmentationMap(object):
         else:
             self.SegMap = segmap
 
-        self.KT, self.OK = Extract.segmap_to_kdtree(self.SegMap)
+        self.positions=positions
+        self.signal_field=signal_field
+        self.KT, self.OK = Extract.segmap_to_kdtree(self.SegMap,
+            positions=positions,signal_field=signal_field)
     
     def subtract(self, B):
         '''Subtracts B.SegMap from current SegMap.
@@ -183,6 +297,9 @@ class SegmentationMap(object):
 
         Args:
             B: The SegmentationMap object to subtract off
+            signal_field: String containing the field to extract signal from
+                defaults to SpexSpecFit, could also be SpexSpecCenter
+            
 
         Returns:
             Nothing, but has side effects.'''
@@ -202,10 +319,10 @@ class SegmentationMap(object):
             if np.any(w[ok] != B.SegMap[i]['WaveCalib'][0][0][ok]):
                 raise Exception("Mismatched segmentation maps, wave")
 
-            d = self.SegMap[i]['SpexSpecFit'][0][0] \
-                    -  B.SegMap[i]['SpexSpecFit'][0][0]
+            d = self.SegMap[i][self.signal_field][0][0] \
+                    -  B.SegMap[i][self.signal_field][0][0]
 
-            self.SegMap[i]['SpexSpecFit'][0][0] = d
+            self.SegMap[i][signal_field][0][0] = d
 
     def draw(self, figure_number=1, minl=450, maxl=800, 
         subtract_sky=False, outfile=None):
@@ -230,14 +347,20 @@ class SegmentationMap(object):
             sky_spec = self.sky_spectrum
 
         x,y,v = Extract.segmap_to_img(self.SegMap, minl=minl, maxl=maxl, 
-            sky_spec=sky_spec)
+            sky_spec=sky_spec,positions=self.positions, 
+            signal_field=self.signal_field)
 
         fig = pl.figure(figure_number, figsize=(9,8))
-        pl.xlim(-12, 17)
-        pl.ylim(-7, 27)
+        if self.positions[0]=='MeanX':
+            pl.xlim(-100,2200)
+            pl.ylim(-100,2200)
+        else:
+            pl.xlim(-12, 17)
+            pl.ylim(-7, 27)
         pl.scatter(x,y,c=v, s=60, picker=0.5, marker='h')
 
-    def select_circle(self, center_xs, distance=2):
+    def select_circle(self, center_xs, distance=2, 
+        positions=('OnSkyX','OnSkyY')):
         '''
         Selects and reutrns the object spectra near spectrum index `center_xs`
 
@@ -252,12 +375,15 @@ class SegmentationMap(object):
             Note the spectra are on a different wavelength grid.
         '''
 
+        if self.positions[0]=='MeanX':
+            if distance<60: distance*=60
+
         if center_xs is None:
             return None
 
         ix = self.OK[center_xs[0]]
-        X = self.SegMap[ix]['OnSkyX'][0][0][0]
-        Y = self.SegMap[ix]['OnSkyY'][0][0][0]
+        X = self.SegMap[ix][positions[0]][0][0][0]
+        Y = self.SegMap[ix][positions[1]][0][0][0]
 
         print X,Y
 
@@ -289,6 +415,9 @@ class SegmentationMap(object):
             plot(ll, ss) # Plots the spectrum
         '''
 
+        if self.positions[0]=='MeanX':
+            if distance<60: distance*=60
+
         return Extract.spectra_near_position(self.KT, self.SegMap,
                         X,Y, distance=distance, ixmap=self.OK, 
                         pixel_shift=self.pixel_shift)
@@ -311,6 +440,9 @@ class SegmentationMap(object):
                 'all_spec': and a matrix of spectra,
                 'num_spec': The number of spectra}'''
 
+        if self.positions[0]=='MeanX':
+            if distance<60: distance*=60
+
         return Extract.interp_and_sum_spectra(
                 self.spectra_near_position(X,Y, distance),
                 onto=onto, sky_spec=sky_spec)
@@ -328,6 +460,10 @@ class SegmentationMap(object):
         Returns:
             List of spectra, see spectra_near_position'''
 
+        if self.positions[0]=='MeanX':
+            if small<60: small *= 60
+            if large<60: large *= 60
+            
         return Extract.spectra_in_annulus(self.KT, self.SegMap,
                 X, Y, small=small, large=large, ixmap=self.OK, 
                 pixel_shift=self.pixel_shift)
@@ -347,6 +483,10 @@ class SegmentationMap(object):
                 'spec_adu', the median sky spectrum, 
                 'all_spec': and a matrix of spectra,
                 'num_spec': The number of spectra}'''
+
+        if self.positions[0]=='MeanX':
+            if small<60: small *= 60
+            if large<60: large *= 60
 
         return Extract.interp_and_sum_spectra(
                 self.spectra_in_annulus(X,Y, small, large))
@@ -371,8 +511,15 @@ class SegmentationMap(object):
             Stores the returned values into the class'''
 
        
+        if self.positions[0]=='MeanX':
+
+            if X<60:
+                X = 1024
+                Y=1024
+            if distance<60: distance*= 60
+
         res = Extract.sky_median(self.KT, self.SegMap, ixmap=self.OK,
-            pixel_shift=self.pixel_shift)
+            pixel_shift=self.pixel_shift,X=X,Y=Y,distance=distance)
 
         return res
 
