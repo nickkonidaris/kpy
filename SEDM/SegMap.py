@@ -34,8 +34,11 @@ class PositionPicker(object):
     tlines = [761.5, 589.0, 557.7, 435.8, 519.9, 630.0]
     pixel_shift = 0
     positions=None
+    qecurve = None
+    
 
-    def __init__(self,filelist,positions=('OnSkyX','OnSkyY')):
+    def __init__(self,filelist,positions=('OnSkyX','OnSkyY'),
+        qefunction=None):
         print "Starting picker GUI"
         self.filelist = filelist
         self.positions=positions
@@ -43,11 +46,13 @@ class PositionPicker(object):
 
         self.fig.canvas.mpl_connect("key_press_event", self)
         self.fig.canvas.mpl_connect("pick_event", self)
+        self.fig.canvas.mpl_connect("button_press_event", self)
 
         self.fig2 = pl.figure(2)
         self.fig2.canvas.mpl_connect("key_press_event", self)
         self.fig2.canvas.mpl_connect("pick_event", self)
 
+        self.qecurve = qefunction
         self.index = 0
         self.load()
         self.draw()
@@ -56,10 +61,11 @@ class PositionPicker(object):
         """Write status to file"""
 
         dt = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        X,Y = self.picked
         print "Writing to: %s" % self.outfile
         str = json.dumps({"outfile": self.outfile,
                         "infile": self.filelist[self.index],
-                        "spec": self.picked,
+                        "spec": (X,Y),
                         "status": self.status,
                         "pixel_shift": self.pixel_shift,
                         "when": dt}, indent=4)
@@ -103,22 +109,19 @@ class PositionPicker(object):
     def draw_spectrum(self):
         ''' Draw the spectrum in figure(2) '''
 
+
         pl.figure(2)
         pl.clf()
         if self.picked == []: return
         self.SM.pixel_shift = self.pixel_shift
 
-        seg_to_extract = self.SM.SegMap[self.picked][0]
-
-        X = seg_to_extract[self.positions[0]][0][0]
-        Y = seg_to_extract[self.positions[1]][0][0]
-
+        X,Y = self.picked
+        print "Extracting at: %s,%s" % (X,Y)
         sky_spec = self.SM.spectrum_in_annulus(X,Y)
         wave = sky_spec["wave_nm"]
         sky = (wave, sky_spec["spec_adu"]/sky_spec["num_spec"])
 
         obj_spec = self.SM.spectrum_near_position(X,Y, onto=wave)
-
 
         pl.xlabel("wavelength [nm]")
         spec = obj_spec["spec_adu"]
@@ -129,8 +132,14 @@ class PositionPicker(object):
         self.sky_spec = sky
         self.obj_spec = (wave, spec)
 
-        pl.step(wave, spec)
-        pl.step(wave, sky[1]*obj_spec["num_spec"],'r')
+        if self.qecurve is None: correction = 1.0
+        else:
+            correction = 1/self.qecurve(wave*10)
+            correction[correction<.01] = 1.0
+            correction[correction>100]=1.0
+
+        pl.step(wave, spec*correction)
+        pl.step(wave, sky[1]*obj_spec["num_spec"]*correction,'r')
 
         pl.legend(["object","sky"])
         pl.xlim(350,1000)
@@ -166,11 +175,10 @@ class PositionPicker(object):
     def __call__(self, event):
         '''Event call handler for Picker gui.'''
 
-        if event.name == 'pick_event':
-            self.picked = self.SM.OK[event.ind[0]]
-            pl.figure(1)
-            self.draw()
-
+        if event.name == 'button_press_event':
+            self.picked = (event.xdata, event.ydata)
+            self.draw_spectrum()
+            
         elif event.name == 'key_press_event':
             if event.key == '\\':
                 print "Shifting"
@@ -221,7 +229,7 @@ o - ok: target visible
 
     
         x,y,v = Extract.segmap_to_img(self.SM.SegMap, sky_spec=sky_spec,
-            minl=546.1, maxl=579.1,positions=self.positions)
+            minl=500, maxl=700,positions=self.positions)
         self.Xs = x
         self.Ys = y
         self.Values = v
@@ -241,12 +249,16 @@ o - ok: target visible
             name = header['OBJECT']
         except: name = "???"
 
+        if self.positions[0] == 'OnSkyX': diam = 0.5
+        else: diam = 1
+
+
         pl.title("{0}/{1}".format(name, fname))
         pl.scatter(self.Xs,
                     self.Ys,
                     c=self.Values,
-                    s=60,
-                    picker=0.5,
+                    s=40,
+                    picker=diam,
                     marker='h')
         pl.colorbar()
 
