@@ -11,4 +11,4 @@ Sextractor is used
 
 ## Wavelength solution
 
-A combination of elements used.
+A combination of elements used. See [Extraction.py](Extraction.py)
