@@ -1,4 +1,5 @@
 
+import argparse
 import pdb
 import numpy as np
 import pylab as pl
@@ -16,7 +17,7 @@ import scipy.signal as SG
 
 from numpy.polynomial.chebyshev import chebfit, chebval
 
-import Extraction
+import SEDMr.Extraction as Extraction
 reload(NPK.Fit)
 reload(Extraction)
 
@@ -163,7 +164,55 @@ def find_hg_spectra(lines, dYlimit=3, outname="find_spectra"):
 
     return res[0]
 
-def extract(HDUlist, assoc_hg_spec, filename='raw_hg_extractions'):
+
+def wavelength_extract(HDUlist, wavecalib, filename='extracted_spectra.npy'):
+    
+    dat = HDUlist[0].data
+    exptime = HDUlist[0].header['EXPTIME']
+
+    extractions = []
+    update_rate = len(wavecalib) / Bar.setup()
+
+    for ix, ss in enumerate(wavecalib):
+        if ix % update_rate == 0: Bar.update()
+        if not ss.ok: 
+            extractions.append(Extraction.Extraction(seg_id=ss.seg_id,
+                ok=False))
+            continue
+        minx = np.max((0,ss.xrange[0]-5))
+        maxx = np.min((minx + 265,2047))
+        yfun = np.poly1d(ss.poly)
+
+        xpos = xrange(minx, maxx)
+        res = np.zeros(len(xpos))
+        res[:] = np.nan
+        for i in xrange(len(xpos)):
+            X = xpos[i]
+            Y = yfun(X)
+            if not np.isfinite(X) or not np.isfinite(Y):
+                continue
+            Ys = slice(np.max((0,np.int(Y)-2)),np.min((np.int(Y)+2, 2047)))
+            res[i] = np.sum(dat[Ys,X])
+
+
+        extractions.append( 
+            Extraction.Extraction(xrange=(minx,maxx), yrange=(yfun(xpos[0]), 
+                                    yfun(xpos[-1])),
+                                    poly=ss.poly, spec=res/exptime, 
+                                    seg_id=ss.seg_id, exptime=exptime,
+                                    ok=True))
+
+        if ss.__dict__.has_key('lamcoeff') and ss.lamcoeff is not None:
+            extractions[-1].lamcoeff = ss.lamcoeff
+            extractions[-1].lamrms = ss.lamrms
+
+    Bar.done()
+
+    np.save(filename, extractions)
+    return extractions
+
+
+def extract(HDUlist, assoc_hg_spec, filename='raw_extractions'):
 
 
     dat = HDUlist[0].data
@@ -260,7 +309,7 @@ def rough_grid(extractions, lines=[365.0, 404.65, 435.83, 546.07, 578.0],
 def RMS(vec):
     return np.sqrt(np.sum((vec-np.mean(vec))**2))
 
-def fit_spectra_Hg_Xe(Hgs, Xes, plot=False):
+def fit_spectra_Hg_Xe(Hgs, Xes, plot=False, outname='fit_spectra'):
     
     assert(len(Hgs) == len(Xes))
 
@@ -306,7 +355,7 @@ def fit_spectra_Hg_Xe(Hgs, Xes, plot=False):
             else: coeff = chebfit(pixs, meas, 4)
             diff = chebval(pixs, coeff) - meas
             rms = RMS(diff)
-            print "%4.0i %6.3f" % (spec_ix, rms)
+            #print "%4.0i %6.3f" % (spec_ix, rms)
 
             if not np.isfinite(rms): pdb.set_trace()
 
@@ -332,6 +381,7 @@ def fit_spectra_Hg_Xe(Hgs, Xes, plot=False):
         pl.show()
             
 
+    np.save(outname, Hgs)
     return Hgs
         
 
@@ -482,7 +532,7 @@ def xe_830nm(p, lam):
     return sig
 
 
-def save_fitted_ds9(fitted, outname='fitted.reg'):
+def save_fitted_ds9(fitted, outname='fine'):
 
     xs = []
     ys = []
@@ -510,7 +560,7 @@ def save_fitted_ds9(fitted, outname='fitted.reg'):
                 ds9 += 'point(%s,%s) # point=cross\n' % (X,Y)
 
 
-    f = open(outname, "w")
+    f = open(outname+".reg", "w")
     f.write(ds9)
     f.close()
             
@@ -538,20 +588,78 @@ def xe_890nm(p, lam):
 
     return sig
 
+
+parser = argparse.ArgumentParser(description=\
+    '''Wavelength.py performs:
+
+        1. Rough wavelength calibration based on Mercury lamp lines.
+        2. Fine wavelength calbiration based on Xenon and Mercury lamp lines.
+        3. Extraction of spectra with a fine wavelength calibration.
+
+        For each step, various report files are written, often ds9 region 
+        files.
+
+        the _coarse.npy file contains a length-1 list with a dictionary. The
+            dictionary contains {wavelength: [(XY point)]} with all XY points
+            for a given Hg emission line wavelength.
+
+        the assoc_Hg.npy file contains a length-1 list with the associated
+            Hg solutions from the above *_coarse file. 
+
+        --dome comes from FindSpectra.py
+
+        for rough set --dome [npy], --hgcat [txt], and --outname 
+        for fine set --xefits [fits], --hgassoc [npy], and --outname
+    ''', formatter_class=argparse.RawTextHelpFormatter)
+
+parser.add_argument('step', type=str, help='One of [rough|fine|extract]')
+parser.add_argument('--infile', type=str, help='Infile name, purpose depends on step')
+parser.add_argument('--dome', type=str, help='Dome segment definition npy file. Used in rough.')
+parser.add_argument('--hgfits', type=str, help='Name of mercury fits file')
+parser.add_argument('--xefits', type=str, help='Name of xenon fits file')
+parser.add_argument('--hgcat', type=str, help='Name of mercury sextractor catalog')
+parser.add_argument('--coarse', type=str, help='Name of coarse Hg solution [npy]')
+parser.add_argument('--hgassoc', type=str, help='Name of coarse Hg solution [npy]')
+parser.add_argument('--fine', type=str, help='Name of fine solution [npy]')
+parser.add_argument('--toextract', type=str, help='Name of fine solution [npy]')
+parser.add_argument('--outname', type=str, help='Prefix name of output file')
+
     
 
 if __name__ == '__main__':
+    args = parser.parse_args()
+    outname = args.outname
+
+    if args.step == 'rough':
+        hgfits = args.hgfits
+        catname = args.hgcat
+        catalog = read_catalog(catname)
+        spec_loc_fname = args.dome
+        spec_loc = read_spec_loc(spec_loc_fname)
+        hg_spec = find_hg_spectra(catalog, outname=outname)
+        assoc_hg_with_flats(spec_loc, hg_spec)
+    elif args.step == 'fine':
+        XeDat = pf.open(args.xefits)
+        HgDat = pf.open(args.hgfits)
+
+        assoc_hg_spec = np.load(args.hgassoc)[0]
+        Xe_E = extract(XeDat, assoc_hg_spec, filename="Xe_ext_"+args.outname)
+        Hg_E = extract(HgDat, assoc_hg_spec, filename="Hg_ext_"+args.outname)
+        gridded = rough_grid(Hg_E, outname=outname)
+        fitted = fit_spectra_Hg_Xe(gridded, Xe_E, plot=False, 
+            outname=outname)
+        save_fitted_ds9(fitted, outname=outname)
+    elif args.step == 'extract':
+        
+        fitted = np.load(args.fine)
+        hdu = pf.open(args.toextract)
+        outname = args.outname
+
+        ww = wavelength_extract(hdu, fitted, filename=outname)
+        
+    sys.exit()
     
     
-    dat_fname = sys.argv[1]
-    catname = sys.argv[2]
-    spec_loc_fname = sys.argv[3]
-    outname = sys.argv[4]
-
-    dat = pf.open(dat_fname)
-
-    #catalog = read_catalog(catname)
-    spec_loc = read_spec_loc(spec_loc_fname)
     hg_spec = np.load('Hg.txt.npy')[0]
     #hg_spec = find_hg_spectra(catalog, outname=outname)
     #assoc_hg_spec = assoc_hg_with_flats(spec_loc, hg_spec)

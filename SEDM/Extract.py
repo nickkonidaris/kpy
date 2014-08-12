@@ -51,7 +51,6 @@ def segmap_to_kdtree(SegMap, positions=('OnSkyX','OnSkyY'),
     """
     data = []
     oks = []
-    print positions
     for i in xrange(len(SegMap)):
         seg = SegMap[i][0]
 
@@ -85,8 +84,8 @@ def spectra_in_annulus(KT, SegMap, X, Y, small=200, large=300, ixmap=None,
             ]
 
     """
-    near = set(KT.query_ball_point( (X, Y), small))
-    far = set(KT.query_ball_point( (X, Y), large))
+    near = set(KT.query_ball_point( (X, Y), small/2))
+    far = set(KT.query_ball_point( (X, Y), large/2))
 
     if ixmap is None: ixmap = range(len(SegMap))
 
@@ -94,11 +93,12 @@ def spectra_in_annulus(KT, SegMap, X, Y, small=200, large=300, ixmap=None,
     results = []
     for index in in_annulus:
         ix = ixmap[index]
-        lam = SegMap[ix]['WaveCalib'][0][0][:]
+        try: lam = SegMap[ix]['WaveCalib'][0][0][:]
+        except: continue
         lam = FF.shift_pixels(lam, pixel_shift)
-        results.append( (lam,
+        results.append( [lam,
                         SegMap[ix]['SpexSpecFit'][0][0],
-                        ix))
+                        ix])
 
     return results
 
@@ -147,7 +147,8 @@ def spectra_near_position(KT, SegMap, X, Y, distance=2, ixmap=None,
 
     """
 
-    ixs = KT.query_ball_point( (X, Y), distance)
+    print "query in ", distance/2
+    ixs = KT.query_ball_point( (X, Y), distance/2)
 
     if ixmap is None:
         ixmap = range(len(SegMap))
@@ -160,9 +161,9 @@ def spectra_near_position(KT, SegMap, X, Y, distance=2, ixmap=None,
         lam = SegMap[ix]['WaveCalib'][0][0][:]
         lam = FF.shift_pixels(lam, pixel_shift)
 
-        results.append( (lam,
+        results.append( [lam,
                         SegMap[ix]['SpexSpecFit'][0][0], 
-                        ix))
+                        ix])
 
     return results
 
@@ -193,6 +194,10 @@ def interp_and_sum_spectra(specs, sky_spec = None, onto=None):
     minw = np.nanmin(wave)
     maxw = np.nanmax(wave)
 
+    
+    # For debugging purposes, get rid of the dlam part
+    _use_dlam = True 
+
     if onto is not None:
         # Interpolate onto a specified grid
         specfun = interp1d(wave, spec, bounds_error=False, fill_value=0)
@@ -203,7 +208,8 @@ def interp_and_sum_spectra(specs, sky_spec = None, onto=None):
 
     if sky_spec is not None:
         sky_wave, sky_spec = sky_spec
-        dlamsky = lambda_to_dlambda(sky_wave)
+        if _use_dlam: dlamsky = lambda_to_dlambda(sky_wave)
+        else: dlamsky = 1.0
         skyf = interp1d(sky_wave, sky_spec/dlamsky, 
             bounds_error=False, fill_value=0.0)
 
@@ -212,9 +218,13 @@ def interp_and_sum_spectra(specs, sky_spec = None, onto=None):
         lam = specs[i][0][::-1]
         ss = specs[i][1][::-1]
 
-        dlam = lambda_to_dlambda(lam)
-        dlamf = interp1d(lam, dlam, bounds_error=False,
-            fill_value=0.0)
+        if _use_dlam:
+            dlam = lambda_to_dlambda(lam)
+            dlamf = interp1d(lam, dlam, bounds_error=False,
+                fill_value=0.0)
+        else:
+            dlam = 1.0
+            dlamf = lambda x: 1.0
 
         ok = np.isfinite(lam) & np.isfinite(ss) & \
             (lam > minw) & (lam < maxw)
@@ -237,12 +247,13 @@ def interp_and_sum_spectra(specs, sky_spec = None, onto=None):
 
     return  {'wave_nm': wave,
         'spec_adu': np.nansum(all, axis=1),
-        'num_spec': nspec,
+        'num_spec': len(spec),
         'all_spec': all}
 
 
-def segmap_to_img(SegMap, sky_spec=None, minl=400, maxl=850,
+def segmap_to_img(SegMap, sky_spec=None, minl=500, maxl=750,
     signal_field='SpexSpecFit', positions=('OnSkyX', 'OnSkyY')):
+    
     """Take seg.Mean[XY] and return an image of the Segmentation Map.
     
     Creates a tesselated hexagon image of the segmentation map. 
@@ -265,35 +276,47 @@ def segmap_to_img(SegMap, sky_spec=None, minl=400, maxl=850,
     
     """
 
+    _use_dlam = True
+
     Xs = []
     Ys = []
     Values = []
     if sky_spec is not None:
         print "Subtracting sky in creating image"
         sky_wave, sky_spec = sky_spec
-        dlamsky = lambda_to_dlambda(sky_wave)
+        if _use_dlam: dlamsky = lambda_to_dlambda(sky_wave)
+        else: dlamsky = 1
 
         skyf = interp1d(sky_wave, sky_spec/dlamsky, bounds_error=False,
             fill_value=0.0)
 
-        dlamskyf = interp1d(sky_wave, dlamsky, bounds_error=False,
-            fill_value=0.0)
+        if _use_dlam:
+            dlamskyf = interp1d(sky_wave, dlamsky, bounds_error=False,
+                fill_value=0.0)
+        else:
+            dlamskyf = lambda x: 1.0
 
         minw = np.nanmin(sky_wave)
         maxw = np.nanmax(sky_wave)
     
-    pl.figure(2)
-    pl.clf()
  
     for i in xrange(len(SegMap)):
         seg = SegMap[i][0]
     
-        if len(seg['WaveCalib']) == 0: continue
+        if len(seg['WaveCalib']) == 0: 
+            Xs.append(seg[positions[0]][0][0])
+            Ys.append(seg[positions[1]][0][0])
+            Values.append(np.nan)
+            continue
 
         wave = seg['WaveCalib'][0][::-1]
         spec = seg[signal_field][0][::-1]
 
-        if len(wave) < 10: continue
+        if len(wave) < 10: 
+            Xs.append(seg[positions[0]][0][0])
+            Ys.append(seg[positions[1]][0][0])
+            Values.append(np.nan)
+            continue
 
 
         roi = (wave > minl) & (wave < maxl)
@@ -316,13 +339,18 @@ def segmap_to_img(SegMap, sky_spec=None, minl=400, maxl=850,
                 continue
             
         
-            dlam = lambda_to_dlambda(wave)
+            if _use_dlam: dlam = lambda_to_dlambda(wave)
+            else: dlam = 1.0
+
             local_sky = skyf(wave) * dlamskyf(wave)
 
             #local_sky = skyf(wave[ok])
             Values.append(np.median(spec[ok] - local_sky[ok]))
 
-    return map(np.array, (Xs, Ys, Values))
+    
+    Xs,Ys,Values = map(np.array, (Xs, Ys, Values))
+
+    return (Xs, Ys, Values)
 
 
 

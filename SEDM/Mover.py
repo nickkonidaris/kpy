@@ -8,7 +8,10 @@ def go(fr, to):
     mnths = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", 
         "oct", "nov", "dec"]
     
-    files = glob.glob(fr)
+    if type(fr) == str:
+        files = glob.glob(fr)
+    else:
+        files = fr
 
     for path in files:
         fname = path.split("/")[-1]
@@ -16,10 +19,10 @@ def go(fr, to):
             td, h, min, s = fname.split("_")
 
             if td[0:3] == 'ifu':
-                type = 'ifu'
+                otype = 'ifu'
                 y,m,d = td[3:7], td[7:9], td[9:11]
             else:
-                type = 'rc'
+                otype = 'rc'
                 continue
                 y,m,d = td[2:6], td[6:8], td[8:10]
 
@@ -30,8 +33,9 @@ def go(fr, to):
         
         if int(h) > 12: outday = d
         else: outday = "%2.2i" % (int(d)-1)
+
         outdir = os.path.join(to, y+ mnths[int(m)-1]+outday)
-        outfile = type + y+m+d+"_"+h+"_"+min+"_"+s
+        outfile = otype + y+m+d+"_"+h+"_"+min+"_"+s
 
         if os.path.exists(outdir) == False:
             os.mkdir(outdir)
@@ -39,5 +43,13 @@ def go(fr, to):
         shutil.copy2(path, os.path.join(outdir,outfile))
 
         
+if __name__ == '__main__':
+    import sys
+
+    if len(sys.argv) < 2:
+        raise Exception("not enough arguments")
+        
+
+    go(sys.argv[1:-2], sys.argv[-1])
         
 

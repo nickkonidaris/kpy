@@ -11,6 +11,7 @@ import scipy.io
 import matplotlib.pyplot as pl
 from matplotlib.backend_bases import KeyEvent 
 from matplotlib.backend_bases import PickEvent
+import scipy
 
 import Disp
 
@@ -24,6 +25,7 @@ reload(Disp)
 
 class SegmentationMap(object):
     KT = None # KD Tree
+    KT_spax = None # Spaxel-based KD Tree
     OK = None # list of segmap elements with np.isfinite OnSkyX and OnSkyY
         # positions. Note that the KT index values return an index into
         # OK and not SegMap. Any KT Queries will require something like:
@@ -35,31 +37,144 @@ class SegmentationMap(object):
     pixel_shift = 0 # The number of pixels to translate the spectra. pixel_shift
         # is used for flexure correction and is measured from the spectra
         # themselves.
+    norm = None # Normalization vector
 
     positions=None # Use OnSky? or Mean? from the SegmentationMap
     signal_field=None # Use SpexSpecFit or SpexSpecCenter
 
     def __init__(self, segmap=None, positions=('OnSkyX', 'OnSkyY'),
-        signal_field='SpexSpecFit'):
+        signal_field='SpexSpecFit', norm=None):
         ''' Loads the segmap, creates the KD Tree.
 
         Args:
             segmap: Either a filename or a segmentation map array '''
         
-        if type(segmap) == str:
+        if (type(segmap) == str) or (type(segmap) == unicode):
             print "Loading: %s" % segmap
             mat = scipy.io.loadmat(segmap)
             self.SegMap = mat['SegmentsInfo']
         else:
             self.SegMap = segmap
 
+        self.norm = norm
+        if norm is not None:
+            for i in xrange(len(norm)):
+                self.SegMap[i]['SpexSpecCenter'] /= norm[i]
+                self.SegMap[i]['SpexSpecFit'] /= norm[i]
+
         self.positions=positions
         self.signal_field=signal_field
         self.KT, self.OK = Extract.segmap_to_kdtree(self.SegMap,
             positions=positions,signal_field=signal_field)
     
+    def to_spaxel(self):
+        ''' Convert pixel numbers to spaxels.
+
+        Recall, for a hexagon oriented as 
+                                        UL UR
+                                         \ /
+                                       L -o- R
+                                         / \
+                                        DL DR
+    The orientation of spaxels follows 3:2:1 triangle rules where the 
+    distance oUR is (sqrt 3/2, 1), oR (sqrt 3, 0), and the rest are
+    reflections around these two values.
+
+        Returns:
+            Nothing
+
+        Side effects:
+            Populats KT_spaxel'''
+
+        traversed = []
+        positions = []
+        map = {}
+
+            
+        def find_near(start, direction, spax, curr):
+            '''Helper function'''
+            dist, id = self.KT.query(start + direction)
+            pos = self.KT.data[id]
+
+            if dist > 10: return
+
+            if (id not in traversed):
+                accum = curr + spax
+                traversed.append(id)
+                positions.append(accum)
+
+                find_near(pos, [12,50],  ( np.sqrt(3)/2.0,  1.0), accum)
+                find_near(pos, [48,15],  ( np.sqrt(3),      0.0), accum)
+                find_near(pos, [37,35],  ( np.sqrt(3)/2.0, -1.0), accum)
+                find_near(pos, [-10,48], (-np.sqrt(3)/2.0, -1.0), accum)
+                find_near(pos, [-48,14], (-np.sqrt(3),      0.0), accum)
+                find_near(pos, [-36,35], (-np.sqrt(3)/2.0,  1.0), accum)
+
+
+        npa = np.array
+        find_near(self.KT.data[0], npa([0,0]), npa([0,0]), npa([0,0]))
+    
+        for p in positions: print p
+        self.KT_spax = scipy.spatial.KDTree(np.array(positions))
+        self.ids_spax = traversed
+            
+
+
+
+    def add(self, B):
+        '''Adds B.SegMap to self.Segmap
+
+        sm.add(B) has side effects and overwrites the segmap in self
+
+        Args:
+            B: The SegmentationMap object to subtract off
+            signal_field: String containing the field to extract signal from
+                defaults to SpexSpecFit, could also be SpexSpecCenter'''
+
+        if len(self.SegMap) != len(B.SegMap):
+            raise Exception("Mismatched segmentation maps")
+
+        for i in xrange(len(self.SegMap)):
+            try:
+                w = self.SegMap[i]['WaveCalib'][0][0]
+            except:
+                continue
+
+            ok = np.isfinite(w) & np.isfinite(B.SegMap[i]['WaveCalib'][0][0])
+            if np.any(w[ok] != B.SegMap[i]['WaveCalib'][0][0][ok]):
+                raise Exception("Mismatched segmentation maps, wave")
+
+            d = self.SegMap[i][self.signal_field][0][0] \
+                    +  B.SegMap[i][self.signal_field][0][0]
+
+            self.SegMap[i][self.signal_field][0][0] = d
+
+    def divide_scalar(self, divisor):
+        '''Divides self.SegMap / divisor
+
+        Function has side effects and overwrites the segmap in self
+
+        Args:
+            B: A scalar value to divide by
+            signal_field: String containing the field to extract signal from
+                defaults to SpexSpecFit, could also be SpexSpecCenter'''
+
+        for i in xrange(len(self.SegMap)):
+            try:
+                w = self.SegMap[i]['WaveCalib'][0][0]
+            except:
+                continue
+
+            d = self.SegMap[i][self.signal_field][0][0] \
+                    / divisor
+
+            self.SegMap[i][self.signal_field][0][0] = d
+
+
+
+    
     def subtract(self, B):
-        '''Subtracts B.SegMap from current SegMap.
+        '''Subtracts B.SegMap from current self.SegMap.
 
         sm.substract(B) has side effects and overwrites the segmap in self
 
@@ -90,10 +205,10 @@ class SegmentationMap(object):
             d = self.SegMap[i][self.signal_field][0][0] \
                     -  B.SegMap[i][self.signal_field][0][0]
 
-            self.SegMap[i][signal_field][0][0] = d
+            self.SegMap[i][self.signal_field][0][0] = d
 
     def draw(self, figure_number=1, minl=450, maxl=800, 
-        subtract_sky=False, outfile=None):
+        subtract_sky=False, outfile=None, cmin=None, cmax=None):
         '''Draw a figure showing the segmentation map cube
         
         Args:
@@ -125,7 +240,13 @@ class SegmentationMap(object):
         else:
             pl.xlim(-12, 17)
             pl.ylim(-7, 27)
-        pl.scatter(x,y,c=v, s=60, picker=0.5, marker='h')
+        c = v[:]
+        if cmin is not None: c[c<cmin] = cmin
+        if cmax is not None: c[c>cmax] = cmax
+
+        pl.scatter(x,y,c=c, s=60, picker=0.5, marker='h')
+
+        return x,y,v
 
     def select_circle(self, center_xs, distance=2, 
         positions=('OnSkyX','OnSkyY')):
@@ -211,9 +332,10 @@ class SegmentationMap(object):
         if self.positions[0]=='MeanX':
             if distance<60: distance*=60
 
+        spectra = self.spectra_near_position(X,Y, distance)
         return Extract.interp_and_sum_spectra(
-                self.spectra_near_position(X,Y, distance),
-                onto=onto, sky_spec=sky_spec)
+                spectra,
+                onto=onto, sky_spec=sky_spec), spectra
         
     def spectra_in_annulus(self, X, Y, small=4, large=6):
         '''Returns all spectra in the annulus between radius small and large.
@@ -256,10 +378,9 @@ class SegmentationMap(object):
             if small<60: small *= 60
             if large<60: large *= 60
 
+        spectra = self.spectra_in_annulus(X,Y, small, large)
         return Extract.interp_and_sum_spectra(
-                self.spectra_in_annulus(X,Y, small, large))
-                    
-                
+                spectra, onto=onto), spectra
             
 
     def sky_median(self, X=2, Y=10, distance=5):

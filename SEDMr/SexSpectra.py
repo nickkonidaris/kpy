@@ -21,9 +21,9 @@ PARAMETERS_NAME  /tmp/sex.sex.param  # name of the file containing catalog conte
 #------------------------------- Extraction ----------------------------------
  
 DETECT_TYPE      CCD            # CCD (linear) or PHOTO (with gamma correction)
-DETECT_MINAREA   30              # minimum number of pixels above threshold
-DETECT_THRESH    6.5            # <sigmas> or <threshold>,<ZP> in mag.arcsec-2
-ANALYSIS_THRESH  6.5            # <sigmas> or <threshold>,<ZP> in mag.arcsec-2
+DETECT_MINAREA   10              # minimum number of pixels above threshold
+DETECT_THRESH    4.5            # <sigmas> or <threshold>,<ZP> in mag.arcsec-2
+ANALYSIS_THRESH  4.5            # <sigmas> or <threshold>,<ZP> in mag.arcsec-2
  
 FILTER           N              # apply filter for detection (Y or N)?
 #FILTER_NAME      default.conv   # name of the file containing the filter
@@ -94,13 +94,13 @@ XML_NAME         sex.xml        # Filename for XML output
 def go(paths):
 
     f = open('/tmp/sex.sex.param', 'w')
-    f.write("NUMBER\n")
+    f.write("NUMBER\nX_IMAGE\nY_IMAGE\nFLUX_ISO\nISOAREA_IMAGE\n")
     f.close()
 
     for path in paths:
         name= os.path.basename(path)
 
-        c = sex_params.format(**{"catalog_name": "deleteme", 
+        c = sex_params.format(**{"catalog_name": "cat_%s.txt" % name, 
             "output_name": name})
 
         conf_file = open("/tmp/sedm_sex_conf.sex","w")

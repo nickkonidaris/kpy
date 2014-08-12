@@ -12,6 +12,7 @@ import NPK.Bar as Bar
 from astropy.table import Table 
 
 from scipy.spatial import KDTree 
+import NPK.Standards as Stds
 import scipy.signal as SG
 
 
@@ -81,30 +82,42 @@ def identify_observations(headers):
 
 
 make_preamble = '''
-EXTSINGLE = @echo
-EXTPAIR = @echo
+EXTSINGLE =  ~/spy /scr2/npk/PYTHON/SEDMr/Extracter.py 
+EXTPAIR =  ~/spy /scr2/npk/PYTHON/SEDMr/Extracter.py 
 '''
 
-def MF_single(objname, obsnum, file):
+def MF_single(objname, obsnum, file, standard):
     '''Create the MF entry for a observation with a single file. '''
 
-    tp = {'objname': objname, 'obsfile': files[0]}
+    print objname, obsnum, file
+    tp = {'objname': objname, 'obsfile': file}
     if obsnum == 1: tp['num'] = ''
     else: tp['num'] = '_obs%i' % obsnum
     tp['outname'] = "%(objname)s%(num)s.npy" % tp
 
-    return '''%(outname)s: %(obsfile)s
-\t$(EXTSINGLE) %(obsfile)s --outfile %(outname)s\n''' %  tp, "%(outname)s" % tp
+    if standard is None: tp['STD'] = ''
+    else: tp['STD'] = "--std %s" % (standard)
+
+    first = '''%(outname)s: fine.npy %(obsfile)s 
+\t$(EXTSINGLE) fine.npy --A %(obsfile)s --outname %(outname)s %(STD)s --nsighi 1.1\n''' % tp
+    second = '''\t$(EXTSINGLE) CORR --A %(outname)s --std %(objname)s --outname CORR.npy\n''' %  tp
+    fn = "%(outname)s" % tp
+
+    if standard is None: return first, fn
+    else: return first+second, fn
+
+    
 
 def MF_AB(objname, obsnum, A, B):
     '''Create the MF entry for an A-B observation'''
 
+    print objname, obsnum, A, B
     tp = {'objname': objname, 'A': A, 'B': B}
     if obsnum == 1: tp['num'] = ''
     else: tp['num'] = '_obs%i' % obsnum
     tp['outname'] = "%(objname)s%(num)s.npy" % tp
-    return '''%(outname)s: %(A)s %(B)s
-\t$(EXTPAIR) %(A)s %(B)s --outfile %(outname)s\n''' %  tp, "%(outname)s" % tp
+    return '''%(outname)s: fine.npy %(A)s %(B)s
+\t$(EXTPAIR) fine.npy %(A)s %(B)s --outname %(outname)s\n''' %  tp, "%(outname)s" % tp
 
 
 
@@ -112,19 +125,30 @@ def to_makefile(objs):
     
     MF = ""
 
-    all = "\nall: "
+    all = "\nall: stds "
+    stds = "\nstds: "
     for objname, observations in objs.iteritems():
         
         objname = objname.replace(" ", "_")
-        objname = objname.replace("+", "_")
         objname = objname.replace(")", "_")
         objname = objname.replace("(", "_")
         objname = objname.replace("[", "_")
         objname = objname.replace("]", "_")
-        print objname, observations
         for obsnum, obsfiles in observations.iteritems():
             if len(obsfiles) == 1:
-                m,a = MF_single(objname, obsnum, obsfiles[0])
+                standard = None
+                if objname.startswith("STD-"):
+                    pred = objname[4:].rstrip().lower().replace("+","")
+                    print pred
+                    if pred in Stds.Standards:
+                        standard = pred
+                    else: standard = None
+
+                m,a = MF_single(objname, obsnum, obsfiles[0], standard=standard)
+
+                if standard is not None:
+                    stds += "%s " % (a)
+
                 MF += m
                 all += a + " "
             if len(obsfiles) == 2:
@@ -133,10 +157,11 @@ def to_makefile(objs):
                 all += a + " "
                 
     all += "\n\n"
+    stds += "\n"
 
 
     f = open("Makefile", "w")
-    f.write(make_preamble + all + MF)
+    f.write(make_preamble + stds + all + MF)
     f.close()
 
 def make_plan(headers):

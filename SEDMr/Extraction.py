@@ -7,6 +7,8 @@ SED Machine Extraction class
 This class is an abstract wrapper around the extraction
 
 '''
+from numpy.polynomial.chebyshev import chebfit, chebval
+import numpy as np
 
 
 class Extraction():
@@ -60,9 +62,55 @@ class Extraction():
     poly = None
     spec = None
     hg_lines = None
+    hgcoef = None
+
+    lamcoeff = None
+    lamrms = None
+    exptime = None
+
+    def get_flambda(self):
+        ''' Returns [wavelength, Flambda] spectrum.
+
+        wavelength in nm
+        Flambda in Electron/nm/10 min
+        
+        Both are around 250 pixels long'''
+
+        dlam = self.get_dlambda()
+        min = 60.0
+        
+        lam = self.get_lambda_nm()
+
+        el_p10m = self.spec*(min*10)/self.exptime
+        return [lam, el_p10m/dlam]
+
+
+    def get_lambda_nm(self):
+        '''Returns lambda spectrum in nm'''
+        xs = np.arange(len(self.spec))
+        lam = chebval(xs, self.lamcoeff)
+
+        return lam
+
+    def get_dlambda(self):
+        '''Returns dlambda spectrum '''
+
+        # Note the +1 below to handle the eating of an element
+        # by diff
+        xs = np.arange(len(self.spec)+1) 
+        dlam = np.abs(np.diff(chebval(xs, self.lamcoeff)))
+        
+
+        return dlam
+
+        
+
+        
+
+
 
     def __init__(self, seg_id=None, ok=None, xrange=None, 
-        yrange=None, poly=None, spec=None,
+        yrange=None, poly=None, spec=None, exptime=exptime,
         hg_lines = None):
         
 
@@ -73,3 +121,4 @@ class Extraction():
         self.poly = poly
         self.spec = spec
         self.hg_lines = hg_lines
+        self.exptime = exptime
