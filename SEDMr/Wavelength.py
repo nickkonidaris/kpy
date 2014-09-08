@@ -30,6 +30,20 @@ def read_catalog(catname):
     return cat
 
 
+def fiducial_spectrum(lamstart=1000.0, lamratio=239./240., len=250):
+    '''Return a typical SED Machine spectrum, use for interpolating on grid
+
+                                        x
+    Equation looks like 1000 x (239/240)
+
+    Args:
+        lamstart(float): default is 1000 nm
+        lamratio(float): default is 239/240, good for SEDM
+        len(int): default of 250 yields a spectrum that goes to ~ 350 nm'''
+
+    xx = np.arange(len)
+
+    return lamstart * lamratio**xx
 
 def assoc_hg_with_flats(domedat, hgcat, guess_offset= {365.0: 231,
     404.65:214, 435.83:193, 546.07: 133, 578.00: 110}, outname='assoc_Hg'):
@@ -165,7 +179,8 @@ def find_hg_spectra(lines, dYlimit=3, outname="find_spectra"):
     return res[0]
 
 
-def wavelength_extract(HDUlist, wavecalib, filename='extracted_spectra.npy'):
+def wavelength_extract(HDUlist, wavecalib, filename='extracted_spectra.npy',
+    flexure_x_corr_nm = 0.0, flexure_y_corr_pix = 0.0, extract_width=3):
     
     dat = HDUlist[0].data
     exptime = HDUlist[0].header['EXPTIME']
@@ -173,6 +188,8 @@ def wavelength_extract(HDUlist, wavecalib, filename='extracted_spectra.npy'):
     extractions = []
     update_rate = len(wavecalib) / Bar.setup()
 
+
+    print "Applying %f/%f offset" % (flexure_x_corr_nm, flexure_y_corr_pix)
     for ix, ss in enumerate(wavecalib):
         if ix % update_rate == 0: Bar.update()
         if not ss.ok: 
@@ -191,7 +208,14 @@ def wavelength_extract(HDUlist, wavecalib, filename='extracted_spectra.npy'):
             Y = yfun(X)
             if not np.isfinite(X) or not np.isfinite(Y):
                 continue
-            Ys = slice(np.max((0,np.int(Y)-2)),np.min((np.int(Y)+2, 2047)))
+
+            # Extract width requires asymmetry in the slice
+            # slice[-2:3] will return elements -2 to +2 around 0
+            # e.g. len(slice[-2:3]) == 5
+            Ys = slice(
+                np.max((0,np.int(Y)+flexure_y_corr_pix-extract_width)),
+                np.min((np.int(Y)+flexure_y_corr_pix+extract_width+1, 2047)))
+
             res[i] = np.sum(dat[Ys,X])
 
 
@@ -203,7 +227,8 @@ def wavelength_extract(HDUlist, wavecalib, filename='extracted_spectra.npy'):
                                     ok=True))
 
         if ss.__dict__.has_key('lamcoeff') and ss.lamcoeff is not None:
-            extractions[-1].lamcoeff = ss.lamcoeff
+            extractions[-1].lamcoeff = ss.lamcoeff.copy()
+            extractions[-1].lamcoeff[0] -= flexure_x_corr_nm
             extractions[-1].lamrms = ss.lamrms
 
     Bar.done()
