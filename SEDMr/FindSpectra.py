@@ -14,6 +14,8 @@ from astropy.modeling import models, fitting
 import pdb, sys
 import NPK.Bar as Bar
 
+from stsci.tools.gfit import gfit1d 
+
 
 
 Coord = namedtuple("XY", "x y")
@@ -73,8 +75,14 @@ def find_segments(segmap=None, obj=None, plot=False):
         plot - Make an example plot (for debugging)
 
     Returns:
-        [ (segmap tuple) ] - Returns a list f with length equal to the max(segmap). segmentation map tuples
-
+        [ (segmap dictionary) ] - Returns a list f with length equal to the max(segmap). segmentation map Dictionaries containing
+    {   "seg_cnt": Segment ID number, 
+        "xs": List of x positions of trace,
+        "mean_ys": Measured Y position (average) of the trace, 
+        "coeff_ys": polyfit coefficients to the mean_ys,
+        "trace_sigma": Width of trace in pixels (1 sigma),
+        "ok": Trace has more than 50 pixels}
+        
     '''
 
         
@@ -118,8 +126,9 @@ def find_segments(segmap=None, obj=None, plot=False):
 
         if n_el < 50: 
             tr = {"seg_cnt": seg_cnt, "xs": np.array(np.nan), 
-                "means": np.array(np.nan),
-                "poly": np.array(np.nan),
+                "mean_ys": np.array(np.nan),
+                "coeff_ys": np.array(np.nan),
+                "trace_sigma": np.nan,
                 "ok": False}
 
             traces.append(tr)
@@ -128,11 +137,14 @@ def find_segments(segmap=None, obj=None, plot=False):
         means = np.zeros(n_el)
         amps = np.zeros(n_el)
         sds = np.zeros(n_el)
+        trace_profile = np.zeros(mxsr-mnsr)
 
         for i in xrange(n_el):
             XX = i+span[0].x
             profile = np.median(objdat[y_slc, XX-3:XX+3], 1)
             profile -= np.min(profile)
+
+            trace_profile += profile
 
             xs = np.arange(len(profile)) + span[0].y
 
@@ -140,9 +152,10 @@ def find_segments(segmap=None, obj=None, plot=False):
         
         xs = np.arange(n_el) + span[0].x
         poly = np.polyfit(xs, means, 2)
+        tracefit = gfit1d(trace_profile, par=[0, len(trace_profile)/2., 1.7], quiet=1)
 
-        tr = {"seg_cnt": seg_cnt, "xs": np.array(xs), "means": np.array(means),
-            "poly": np.array(poly), "ok": True}
+        tr = {"seg_cnt": seg_cnt, "xs": np.array(xs), "mean_ys": np.array(means),
+            "coeff_ys": np.array(poly), "ok": True, "trace_sigma": np.abs(tracefit.params[2])}
 
         traces.append(tr)
 
