@@ -21,15 +21,17 @@ PARAMETERS_NAME  /tmp/sex.sex.param  # name of the file containing catalog conte
 #------------------------------- Extraction ----------------------------------
  
 DETECT_TYPE      CCD            # CCD (linear) or PHOTO (with gamma correction)
-DETECT_MINAREA   10              # minimum number of pixels above threshold
-DETECT_THRESH    4.5            # <sigmas> or <threshold>,<ZP> in mag.arcsec-2
-ANALYSIS_THRESH  4.5            # <sigmas> or <threshold>,<ZP> in mag.arcsec-2
+DETECT_MINAREA   5              # minimum number of pixels above threshold
+DETECT_THRESH    2.3            # <sigmas> or <threshold>,<ZP> in mag.arcsec-2
+ANALYSIS_THRESH  3.0            # <sigmas> or <threshold>,<ZP> in mag.arcsec-2
  
 FILTER           N              # apply filter for detection (Y or N)?
-#FILTER_NAME      default.conv   # name of the file containing the filter
+FILTER_NAME      default.conv   # name of the file containing the filter
  
-DEBLEND_NTHRESH  32             # Number of deblending sub-thresholds
-DEBLEND_MINCONT  0.005          # Minimum contrast parameter for deblending
+                                # NPK: These parameters are tuned such that each
+                                # peak is nearly object
+DEBLEND_NTHRESH  16             # Number of deblending sub-thresholds
+DEBLEND_MINCONT  0.0000001          # Minimum contrast parameter for deblending
  
 CLEAN            Y              # Clean spurious detections? (Y or N)?
 CLEAN_PARAM      1.0            # Cleaning efficiency
@@ -56,24 +58,24 @@ PIXEL_SCALE      1.0            # size of pixel in arcsec (0=use FITS WCS info)
  
 #------------------------- Star/Galaxy Separation ----------------------------
  
-SEEING_FWHM      2.5            # stellar FWHM in arcsec. Set to 2.5 by NPK 
+SEEING_FWHM      3.0            # stellar FWHM in arcsec. Set to 2.5 by NPK 
 STARNNW_NAME     default.nnw    # Neural-Network_Weight table filename
  
 #------------------------------ Background -----------------------------------
  
-BACK_SIZE        64,30          # Background mesh: <size> or <width>,<height>
-BACK_FILTERSIZE  3              # Background filter: <size> or <width>,<height>
+BACK_SIZE        64,10          # Background mesh: <size> or <width>,<height>
+BACK_FILTERSIZE  9,3              # Background filter: <size> or <width>,<height>
  
 BACKPHOTO_TYPE   GLOBAL         # can be GLOBAL or LOCAL
  
 #------------------------------ Check Image ----------------------------------
  
-CHECKIMAGE_TYPE  -BACKGROUND  SEGMENTATION BACKGROUND
+CHECKIMAGE_TYPE  -BACKGROUND  SEGMENTATION BACKGROUND  FILTERED
                                 # can be NONE, BACKGROUND, BACKGROUND_RMS,
                                 # MINIBACKGROUND, MINIBACK_RMS, -BACKGROUND,
                                 # FILTERED, OBJECTS, -OBJECTS, SEGMENTATION,
                                 # or APERTURES
-CHECKIMAGE_NAME  s_{output_name} seg_{output_name} back_{output_name}
+CHECKIMAGE_NAME  s_{output_name} seg_{output_name} back_{output_name} filtered_{output_name}
  
 #--------------------- Memory (change with caution!) -------------------------
  
@@ -95,6 +97,15 @@ def go(paths):
 
     f = open('/tmp/sex.sex.param', 'w')
     f.write("NUMBER\nX_IMAGE\nY_IMAGE\nFLUX_ISO\nISOAREA_IMAGE\n")
+    f.close()
+
+    f = open("default.conv", "w")
+    f.write("""CONV NORM
+# 2 pix fwhm
+1 2 1
+2 4 2
+1 2 1
+""")
     f.close()
 
     for path in paths:
