@@ -29,15 +29,23 @@ class Extraction():
             ridge of each spectrum. Is converted to a polynomial function via
             np.poly1d. The function parameter is a pixel integer starting
             from xrange[0]
+        trace_sigma (float): The width of the trace that would be used for "optimal"
+           type extractions. The value of trace_sigma represents one standard 
+           deviation. Unit is pixel.
+        profile_sd (float): Profile standard deviation of extraction along ridgeline
         spec ([float]): The extracted 1d spectrum.
+        specw ([flaot]): The extracted 1d spectrum extracted using the profile trace.
         hg_lines ({wavelength: pixel}): An association of mercury lamp wavelength
             and pixel position. These values come from sextractor
         hgcoef ([float]): Chebyshev polynomial coefficients to the best-fit
             mercury lamp spectrum. Used as an intermediate step. Do not use
             in general.
+        mdn_coeff([float]): Chebyshev polynomial coefficients to the best-fit
+            mercury and xe lamp spectrum. lamcoeff should be used as the 
+            wavelength solution. Defaults to None.
         lamcoeff([float]): Chebyshev polynomial coefficients to the best-fit
             mercury and xe lamp spectrum. lamcoeff should be used as the 
-            wavelength solution.
+            wavelength solution. Defaults to None.
         lamrms(float): The RMS residual for the best wavelength solution.
 
     Examples:
@@ -61,27 +69,41 @@ class Extraction():
     yrange = None
     poly = None
     spec = None
+    specw = None
     hg_lines = None
     hgcoef = None
+    mdn_coeff = None
+    trace_sigma = None
 
     lamcoeff = None
     lamrms = None
     exptime = None
 
-    def get_flambda(self):
+    def get_flambda(self, the_spec='spec'):
         ''' Returns [wavelength, Flambda] spectrum.
 
         wavelength in nm
         Flambda in Electron/nm/10 min
         
-        Both are around 250 pixels long'''
+        Both are around 250 pixels long
+        
+        Args:
+            the_spec: Either 'spec' for the top-hat extracted
+                spectrum or 'specw' for the weighted 
+                (so called optimal) extraction.
+        '''
 
         dlam = self.get_dlambda()
         min = 60.0
         
         lam = self.get_lambda_nm()
 
-        el_p10m = self.spec*(min*10)/self.exptime
+        if the_spec == 'spec':
+            ss = self.spec
+        else:
+            ss = self.specw
+
+        el_p10m = ss*(min*10)/self.exptime
         return [lam, el_p10m/dlam]
 
 
@@ -110,8 +132,8 @@ class Extraction():
 
 
     def __init__(self, seg_id=None, ok=None, xrange=None, 
-        yrange=None, poly=None, spec=None, exptime=exptime,
-        hg_lines = None):
+        yrange=None, poly=None, spec=None, specw=None,
+        exptime=exptime, trace_sigma = None, hg_lines = None):
         
 
         self.seg_id = seg_id
@@ -120,5 +142,7 @@ class Extraction():
         self.yrange = yrange
         self.poly = poly
         self.spec = spec
+        self.specw = specw
         self.hg_lines = hg_lines
         self.exptime = exptime
+        self.trace_sigma = trace_sigma
