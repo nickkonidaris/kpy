@@ -45,7 +45,7 @@ def identify_spectra(spectra, outname=None, low=-np.inf, hi=np.inf, plot=False):
     for ix,spectrum in enumerate(spectra):
         if spectrum.__dict__.has_key('spec') and spectrum.spec is not None \
             and spectrum.lamcoeff is not None:
-            l,s = spectrum.get_flambda()
+            l,s = spectrum.get_flambda(the_spec='specw')
             ms.append(np.median(s))
             ixs.append(ix)
             segids.append(spectrum.seg_id)
@@ -109,7 +109,7 @@ def interp_spectra(all_spectra, six, outname=None, plot=False,
     for ix,spectrum in enumerate(all_spectra):
         if ix not in six: continue
 
-        l,s = spectrum.get_flambda()
+        l,s = spectrum.get_flambda(the_spec='specw')
         pix = np.arange(len(s))
         l = c_to_nm(spectrum.lamcoeff, pix, offset=dnm)
         if l.max() - l.min() < 300: continue
@@ -282,7 +282,7 @@ def bgd_level(extractions):
         if spectrum.__dict__.has_key('spec') and spectrum.spec is not None \
             and spectrum.lamcoeff is not None:
         
-            l, Fl = spectrum.get_flambda()
+            l, Fl = spectrum.get_flambda(the_spec='specw')
 
             levels.append(np.median(Fl))
 
@@ -364,6 +364,7 @@ def handle_AB(A, B, fine, outname=None, nsiglo=-1, nsighi=1, corrfile=None):
 
 
     exfile = "extracted_%s.npy" % outname
+    print "Checking if '%s.npy' exists" % outname
     if not os.path.exists(outname + ".npy"):
         E = Wavelength.wavelength_extract(diff, fine, filename=outname)
         np.save(exfile, E)
