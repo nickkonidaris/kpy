@@ -28,6 +28,11 @@ ROT = np.array([[np.cos(theta), -np.sin(theta)],
 
 '''
 
+See figures here:
+
+
+https://www.evernote.com/l/AA1s_YNLWMJBQrCCMZUn8-POndzDsbf4SwA
+
 Axial coordinates of a cube
 
 
