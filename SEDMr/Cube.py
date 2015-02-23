@@ -21,7 +21,7 @@ H2P = np.array([[np.sqrt(3), np.sqrt(3)/2], [0, 3/2.]]) * scale
 P2H = np.array([[np.sqrt(3)/3, -1/3.], [0, 2/3.]]) / scale
 
 # Rotation matrix
-theta = np.deg2rad(-20)
+theta = np.deg2rad(-37+13.5)
 ROT = np.array([[np.cos(theta), -np.sin(theta)], 
                 [np.sin(theta),  np.cos(theta)]])
 
@@ -54,6 +54,86 @@ Even Q coordinates look like
 
 '''
 
+def QR_to_img(exts, Size=2, outname="cube.fits"):
+    
+    Qs = np.array([ext.Q_ix for ext in exts], dtype=np.float)
+    Rs = np.array([ext.R_ix for ext in exts], dtype=np.float)
+
+    minx = Size * np.sqrt(3) * (np.nanmin(Qs) + np.nanmin(Rs)/2)
+    miny = Size * 3./2. * (np.nanmin(Rs))
+    maxx = Size * np.sqrt(3) * (np.nanmax(Qs) + np.nanmax(Rs)/2)
+    maxy = Size * 3./2. * (np.nanmax(Rs))
+
+
+    Dx = maxx-minx
+    Dy = maxy-miny
+    l_grid = 1050.*(239/240.)**np.arange(266)
+    dl_grid = -np.diff(l_grid)
+    l_grid = l_grid[1:]
+
+    img = np.zeros((Dx, Dy, len(l_grid)))
+    img[:] = np.nan
+
+    XSz = img.shape[0]/2
+    YSz = img.shape[1]/2
+
+    allspec = np.zeros((len(exts), len(l_grid)))
+    for cnt, ext in enumerate(exts):
+        if ext.xrange is None: continue
+        if ext.exptime is None: ext.exptime = 1
+        if ext.lamcoeff is None: continue
+
+        ix = np.arange(*ext.xrange)
+        l = chebval(ix, ext.lamcoeff)
+        s = ext.specw
+
+        f = interp1d(l, s, fill_value=np.nan, bounds_error=False)
+        fi = f(l_grid) / dl_grid
+
+        allspec[cnt, :] = fi
+
+        try:
+            x = np.round(Size*np.sqrt(3.) * (ext.Q_ix + ext.R_ix/2)) + XSz
+            y = np.round(Size*3./2. * ext.R_ix) + YSz
+        except:
+            continue
+        try: 
+            for dx in [-1,0,1]:
+                for dy in [-1,0,1]:
+                    img[x+dx,y+dy,:] = fi
+        except: pass
+
+        print x,y
+
+    back = np.median(allspec, 0)
+
+    ff = pf.PrimaryHDU(img.T)
+    ff.writeto(outname)
+
+    for cnt, ext in enumerate(exts):
+        if ext.xrange is None: continue
+        if ext.exptime is None: ext.exptime = 1
+        if ext.lamcoeff is None: continue
+
+        ix = np.arange(*ext.xrange)
+        l = chebval(ix, ext.lamcoeff)
+        s = ext.specw 
+
+        f = interp1d(l, s, fill_value=np.nan, bounds_error=False)
+        fi = f(l_grid)/dl_grid - back
+
+        x = np.round(Size*np.sqrt(3.) * (ext.Q_ix + ext.R_ix/2)) + XSz
+        y = np.round(Size*3./2. * ext.R_ix) + YSz
+        try: 
+            for dx in [-1,0,1]:
+                for dy in [-1,0,1]:
+                    img[x+dx,y+dy,:] = fi
+        except: pass
+
+    ff = pf.PrimaryHDU(img.T)
+    ff.writeto("bs_" + outname)
+
+
 def extraction_to_cube(exts, outname="G.npy"):
     ''' Convert the extraction to sky coordinates
 
@@ -72,8 +152,8 @@ def extraction_to_cube(exts, outname="G.npy"):
         Z_as: Z position in arcsecond (the Z coordinate is runs 45 degree to X
             and is not a ~3rd~ dimension).
 
-        Q_as: The axial Q coordinate
-        R_as: The axial R coordinate
+        Q_ix: The axial Q coordinate in integral units
+        R_ix: The axial R coordinate in integral units
 
         The relationship of Q/R to X/Y is defined through the pixel mapping
         matrix times the rotation matrix
@@ -87,29 +167,42 @@ def extraction_to_cube(exts, outname="G.npy"):
     segids = [el.seg_id for el in exts]
 
     for ext in exts:
-        ext.Q_as = None
-        ext.R_as = None
+        ext.Q_ix = None
+        ext.R_ix = None
     
     for ix, ext in enumerate(exts):
+        if not ext.ok: continue
+
         Xs[ix] = -999
         Ys[ix] = -999
 
-        if ext.lamcoeff is None: continue
+        if ext.lamcoeff is not None: 
+            coeff = ext.lamcoeff
+        elif ext.mdn_coeff is not None:
+            coeff =ext.mdn_coeff
+        else:
+            print ext.xrange[0], ext.yrange[0]
+            continue
+
         ixs = np.arange(*ext.xrange)
-        LL = chebval(ixs, ext.lamcoeff)
+        LL = chebval(ixs, coeff)
         
-        ix_ha = np.argmin(np.abs(LL-656.3))
+        ix_ha = np.nanargmin(np.abs(LL-656.3))
 
         Xs[ix] = ixs[ix_ha]
-        Ys[ix] = np.mean(ext.yrange)
+        Ys[ix] = np.nanmean(ext.yrange)
 
+    Xs = np.array(Xs, dtype=np.float)
+    Ys = np.array(Ys, dtype=np.float)
+    Xs[Xs != Xs] = -999
+    Ys[Ys != Ys] = -999
     dat = np.array([Xs,Ys],dtype=np.float).T
 
     tree = KDTree(dat)
 
     ignore, Center = tree.query([1024,1024], 1)
-    exts[Center].Q_as = 0
-    exts[Center].R_as = 0
+    exts[Center].Q_ix = 0
+    exts[Center].R_ix = 0
 
 
     def populate_hex(to_populate):
@@ -122,79 +215,109 @@ def extraction_to_cube(exts, outname="G.npy"):
         # Query 7 for the object + six surrounding members
         v = np.array([Xs[to_populate], Ys[to_populate]])
         Dists, Ixs = tree.query(v, 7)
-        Tfm = P2H * ROT / np.median(Dists) * 1.8
+        Tfm = P2H * ROT / np.median(Dists) * 2
 
         if Dists[0] < 2: 
             Dists = Dists[1:]
             Ixs = Ixs[1:]
 
-        ok = Dists < 80
+        ok = Dists < 70
         Dists = Dists[ok]
         Ixs = Ixs[ok]
 
-        q_this = exts[to_populate].Q_as
-        r_this = exts[to_populate].R_as
+        q_this = exts[to_populate].Q_ix
+        r_this = exts[to_populate].R_ix
 
-        pl.figure(1)
-        pl.clf()
+        #pl.figure(1)
+        #pl.clf()
         for nix in Ixs:
             nv = np.array([Xs[nix], Ys[nix]])
             D = nv-v
-            rnd = np.round(np.dot(Tfm , D))
+            rnd = np.round(np.dot(Tfm , D)) 
+            #print np.dot(Tfm, D)
 
-            if exts[nix].Q_as is None:
-                exts[nix].Q_as = q_this + rnd[0]
-                exts[nix].R_as = r_this + rnd[1]
+            if rnd[0] == 0 and rnd[1] == 0:
+                continue
+
+            if np.abs(rnd[0]) > 1 or np.abs(rnd[1]) > 1:
+                continue
+
+            if exts[nix].Q_ix is None:
+                exts[nix].Q_ix = q_this + rnd[0]
+                exts[nix].R_ix = r_this + rnd[1]
                 populate_hex(nix)
+            else:
+                if (exts[nix].Q_ix != q_this + rnd[0]) or (exts[nix].R_ix != r_this + rnd[1]):
+                    print "collision: "
+                    print exts[nix].Q_ix, q_this + rnd[0]
+                    print exts[nix].R_ix, r_this + rnd[1]
+                    exts[nix].Q_ix = q_this + rnd[0]
+                    exts[nix].R_ix = r_this + rnd[1]
+                    #import pdb
+                    #pdb.set_trace()
 
-            pl.plot(D[0], D[1], 'o')
-            pl.text(D[0], D[1], "%s" % rnd)
+            #pl.plot(D[0], D[1], 'o')
+            #pl.text(D[0], D[1], "%s %s" % (exts[nix].Q_ix, exts[nix].R_ix))
+
+        #pl.text(0, 0, "%s %s" % (q_this, r_this))
+        #pl.clf()
 
     populate_hex(Center)
 
     # Now convert Q/R to even-Q X/Y
     #
 
-    Qs = np.array([ext.Q_as for ext in exts], dtype=np.float)
-    Rs = np.array([ext.R_as for ext in exts], dtype=np.float)
+    Qs = np.array([ext.Q_ix for ext in exts], dtype=np.float)
+    Rs = np.array([ext.R_ix for ext in exts], dtype=np.float)
 
-    Xs = Qs
-    Zs = Rs - (Qs + (Qs%2))/2.0
-    Ys = -Xs - Zs
+    Xs = np.sqrt(3) * (Qs + Rs/2.0)
+    Ys = 3/2 * Rs
 
+    # Note 0.633 is plate scale measured on 22 May 2014.
     for ix, ext in enumerate(exts):
-        ext.X_as = Xs[ix]
-        ext.Y_as = Ys[ix]
-        ext.Z_as = Zs[ix]
+        ext.X_as = Xs[ix] * 0.633
+        ext.Y_as = Ys[ix] * 0.633
         
 
     np.save(outname, exts)
 
 
 
-parser = argparse.ArgumentParser(description=\
-    '''Cube.py:
-
-    Convert an extracted file into a data cube
-        
-    ''', formatter_class=argparse.RawTextHelpFormatter)
-
-
-parser.add_argument('extracted', type=str, help='Extracted file')
-parser.add_argument('--outname', type=str, help='Output cube name')
-
-args = parser.parse_args()
-
 if __name__ == '__main__':
-    
+    parser = argparse.ArgumentParser(description=\
+        '''Cube.py:
+
+        Convert an extracted file into a data cube
+
+        step is either:
+            makecube: To create the data cube (once per night)
+            extractcube: To extract the cube (one for each observation)
+            
+        ''', formatter_class=argparse.RawTextHelpFormatter)
+
+
+    parser.add_argument('extracted', type=str, help='Extracted file')
+    parser.add_argument('--step', type=str, default='make')
+    parser.add_argument('--outname', type=str, help='Output cube name')
+
+    args = parser.parse_args()
+
+       
     if args.outname is not None:
         args.outname = args.outname.rstrip('.npy')
 
+    step = args.step
     infile = args.extracted
 
     ext = np.load(infile)
-
-    cube = extraction_to_cube(ext)
+    if step == 'make':
+        print "MAKING"
+        cube = extraction_to_cube(ext, outname=args.outname)
+    elif step == 'extract':
+        print "EXTRACTING"
+        QR_to_img(ext, Size=2, outname=args.outname)
+    else:
+        print "NO STEP TO PERFORM"
 
 
 
