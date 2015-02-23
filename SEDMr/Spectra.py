@@ -41,8 +41,8 @@ class Spectra(object):
             
             good_positions.append(ix)
 
-            x = el.xrange[0] + haix
-            y = np.poly1d(el.poly)(x)
+            x = el.X_as
+            y = el.Y_as
 
             positions.append( (x,y) )
 
