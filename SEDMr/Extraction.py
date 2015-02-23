@@ -47,6 +47,10 @@ class Extraction():
             mercury and xe lamp spectrum. lamcoeff should be used as the 
             wavelength solution. Defaults to None.
         lamrms(float): The RMS residual for the best wavelength solution.
+        X_as(float): The relative position of the spaxel in arcsec
+        Y_as(float): The relative position of the spaxel in arcsec
+        Q_ix(int): Q coordinate of the pixel in axial units
+        R_iq(int): R coordinate of the pixel in axial units
 
     Examples:
         You should use the values as follows:
@@ -79,7 +83,12 @@ class Extraction():
     lamrms = None
     exptime = None
 
-    def get_flambda(self, the_spec='spec'):
+    Q_ix = None
+    R_ix = None
+    X_as = None
+    Y_as = None
+
+    def get_flambda(self, the_spec='specw'):
         ''' Returns [wavelength, Flambda] spectrum.
 
         wavelength in nm
@@ -109,8 +118,12 @@ class Extraction():
 
     def get_lambda_nm(self):
         '''Returns lambda spectrum in nm'''
-        xs = np.arange(len(self.spec))
-        lam = chebval(xs, self.lamcoeff)
+        xs = np.arange(*self.xrange)
+        
+        if self.mdn_coeff is not None:
+            lam = chebval(xs, self.mdn_coeff)
+        else:
+            lam = chebval(xs, self.lamcoeff)
 
         return lam
 
@@ -119,8 +132,13 @@ class Extraction():
 
         # Note the +1 below to handle the eating of an element
         # by diff
-        xs = np.arange(len(self.spec)+1) 
-        dlam = np.abs(np.diff(chebval(xs, self.lamcoeff)))
+        xs = np.arange(self.xrange[0], self.xrange[1]+1)
+
+        if self.mdn_coeff is not None:
+            lam = chebval(xs, self.mdn_coeff)
+        else:
+            lam = chebval(xs, self.lamcoeff)
+        dlam = np.abs(np.diff(lam))
         
 
         return dlam
@@ -133,7 +151,8 @@ class Extraction():
 
     def __init__(self, seg_id=None, ok=None, xrange=None, 
         yrange=None, poly=None, spec=None, specw=None,
-        exptime=exptime, trace_sigma = None, hg_lines = None):
+        exptime=exptime, trace_sigma = None, hg_lines = None,
+        X_as=None, Y_as=None, Q_ix=None, R_ix=None):
         
 
         self.seg_id = seg_id
@@ -146,3 +165,7 @@ class Extraction():
         self.hg_lines = hg_lines
         self.exptime = exptime
         self.trace_sigma = trace_sigma
+        self.X_as = X_as
+        self.Y_as = Y_as
+        self.Q_ix = Q_ix
+        self.R_ix = R_ix
