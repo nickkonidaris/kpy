@@ -71,7 +71,7 @@ def measure_flat(fine, HDUlist,
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=\
-        '''Flexure.py
+        '''
 
         ''', formatter_class=argparse.RawTextHelpFormatter)
 
