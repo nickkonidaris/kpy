@@ -16,7 +16,6 @@ import scipy.signal as SG
 from scipy.interpolate import interp1d
 
 
-from numpy.polynomial.chebyshev import chebfit, chebval
 
 import SEDMr.Extraction as Extraction
 import SEDMr.Wavelength as Wavelength
@@ -75,7 +74,7 @@ def measure_flexure_x(fine, HDUlist, plot=True, dY=0,
                     xpos])
             except: continue
 
-        try:ll = chebval(np.arange(len(spec)), f.lamcoeff)
+        try:ll = f.get_lambda_nm()
         except: continue
         specfun = interp1d(ll, spec, bounds_error=False)
         specgrid[:,i] = specfun(lamgrid)
@@ -141,7 +140,7 @@ def measure_flexure_y(fine, HDUlist, profwidth=5, plot=False, outname=None):
         parinfo[0]['value'] = np.max(prof)
         fit = FF.mpfit_do(ffun, xx, prof, parinfo)
         if plot: pl.plot(xx, FF.gaussian4(fit.params, xx))
-        profposys.append(fit.params[1] - profwidth)
+        profposys.append(fit.params[1] - profwidth-1)
     if plot: pl.show()
     profposys = np.array(profposys)
 
