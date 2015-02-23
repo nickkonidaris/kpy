@@ -43,9 +43,10 @@ class PositionPicker(object):
         self.draw_cube()
 
     def draw_cube(self):
-        pl.scatter(self.Xs, self.Ys, c=self.Vs, s=self.pointsize)
-        pl.ylim(2048, 0)
-        pl.xlim(0,2048)
+        pl.scatter(self.Xs, self.Ys, c=self.Vs, s=self.pointsize,
+            vmin=-.2, vmax=.2)
+        pl.ylim(-30,30)
+        pl.xlim(-30,30)
         pl.colorbar()
 
         pl.show()
