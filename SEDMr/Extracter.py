@@ -5,7 +5,6 @@ import pylab as pl
 import pyfits as pf
 import scipy.signal as SG
 
-from pyraf import iraf
 
 from numpy.polynomial.chebyshev import chebfit, chebval
 from scipy.interpolate import interp1d
@@ -19,7 +18,7 @@ reload(Extraction)
 reload(GUI)
 reload(SS)
 
-def identify_spectra_gui(spectra, outname=None, radius=100):
+def identify_spectra_gui(spectra, outname=None, radius=2):
     
     pl.ioff()
     KT = SS.Spectra(spectra)
@@ -30,7 +29,19 @@ def identify_spectra_gui(spectra, outname=None, radius=100):
 
     pl.close()
 
-    return KT.good_positions[kix]
+    return KT.good_positions[kix], pos
+
+def identify_bgd_spectra(spectra, pos, inner=3, outer=6):
+    KT = SS.Spectra(spectra)
+
+    objs = KT.good_positions[KT.KT.query_ball_point(pos, r=inner)]
+    skys = KT.good_positions[KT.KT.query_ball_point(pos, r=outer)].tolist()
+
+    for o in objs:
+        if o in skys: skys.remove(o)
+
+    return skys
+
 
 
 
@@ -45,13 +56,18 @@ def identify_spectra(spectra, outname=None, low=-np.inf, hi=np.inf, plot=False):
     for ix,spectrum in enumerate(spectra):
         if spectrum.__dict__.has_key('spec') and spectrum.spec is not None \
             and spectrum.lamcoeff is not None:
-            l,s = spectrum.get_flambda(the_spec='specw')
-            ms.append(np.median(s))
             ixs.append(ix)
             segids.append(spectrum.seg_id)
 
-            X = np.mean(spectrum.xrange)
-            Y = np.poly1d(spectrum.poly)(X)
+            try: l,s = spectrum.get_flambda(the_spec='specw')
+            except: 
+                ms.append(0)
+                continue
+
+
+            ms.append(np.median(s))
+            X = spectrum.X_as
+            Y = spectrum.Y_as
 
             ds9 += 'point(%s,%s) # point=cross text={%s:%4.2f}\n' % \
                 (X,Y, segids[-1],ms[-1])
@@ -86,6 +102,36 @@ def identify_spectra(spectra, outname=None, low=-np.inf, hi=np.inf, plot=False):
     f.close()
 
 
+    XS = [seg.X_as for seg in spectra]
+    YS = [seg.Y_as for seg in spectra]
+
+    def Strength(x):
+        if x.xrange is None: return None
+        if x.lamcoeff is None: return None
+        if x.specw is None: return None
+        ix = np.arange(*x.xrange)
+        ll = chebval(ix, x.lamcoeff)
+        OK = (ll > 450) & (ll < 700)
+
+        if OK.any():
+            return np.sum(x.specw[OK])
+        else:
+            return None
+
+    sig = [Strength(seg) for seg in spectra]
+
+    pl.clf()
+    XS = np.array(XS, dtype=np.float)
+    YS = np.array(YS, dtype=np.float)
+    sig = np.array(sig, dtype=np.float)
+
+    pl.scatter(XS, YS, c=sig,s=60,marker='h')
+    pl.xlabel("X [as]")
+    pl.ylabel("Y [as]")
+    pl.colorbar()
+    pl.savefig("image_%s.pdf" % outname)
+
+
     return ixs[ok]
         
 def c_to_nm(coefficients, pix, offset=0):
@@ -110,8 +156,11 @@ def interp_spectra(all_spectra, six, outname=None, plot=False,
         if ix not in six: continue
 
         l,s = spectrum.get_flambda(the_spec='specw')
-        pix = np.arange(len(s))
-        l = c_to_nm(spectrum.lamcoeff, pix, offset=dnm)
+        pix = np.arange(*spectrum.xrange)
+
+        if spectrum.mdn_coeff is not None: cs = spectrum.mdn_coeff
+        else: cs = spectrum.lamcoeff
+        l = c_to_nm(cs, pix, offset=dnm)
         if l.max() - l.min() < 300: continue
 
         if np.median(s) < 0: pon = -1.0
@@ -195,6 +244,7 @@ def load_corr():
     
 
 def imarith(operand1, op, operand2, result):
+    from pyraf import iraf
     iraf.images()
 
     pars = iraf.imarith.getParList()
@@ -311,7 +361,8 @@ def handle_extract(data, outname=None, fine='fine.npy',flexure_x_corr_nm=0.0,
 
     return E
 
-def handle_A(A, fine, outname=None, nsighi=2, standard=None, corrfile=None):
+def handle_A(A, fine, outname=None, nsighi=2, standard=None, corrfile=None,
+    Aoffset=None):
     '''Processes A files.
 
     1. Extracts the spectra from the A file
@@ -323,11 +374,19 @@ def handle_A(A, fine, outname=None, nsighi=2, standard=None, corrfile=None):
 
     spec = pf.open(A)
 
-    if not os.path.exists(outname + ".npy"):
-        E = Wavelength.wavelength_extract(spec, fine, filename=outname)
-        np.save(outname, E)
+    if Aoffset is not None:
+        ff = np.load(Aoffset)
+        flexure_x_corr_nm = ff[0]['dXnm']
+        flexure_y_corr_pix = ff[0]['dYpix']
     else:
-        E = np.load(outname + ".npy")
+        flexure_x_corr_nm = 0
+        flexure_y_corr_pix = 0
+
+    E = Wavelength.wavelength_extract(spec, fine, filename=outname,
+        flexure_x_corr_nm=flexure_x_corr_nm, 
+        flexure_y_corr_pix=flexure_y_corr_pix)
+    np.save(outname, E)
+
 
     six = identify_spectra(E, hi=nsighi, outname=outname+".pdf")
     res = interp_spectra(E, six, outname=outname+".pdf", corrfile=corrfile)
@@ -347,7 +406,8 @@ def handle_A(A, fine, outname=None, nsighi=2, standard=None, corrfile=None):
 
 
 
-def handle_AB(A, B, fine, outname=None, nsiglo=-1, nsighi=1, corrfile=None):
+def handle_AB(A, B, fine, outname=None, nsiglo=-1, nsighi=1, corrfile=None,
+    Aoffset=None, Boffset=None, flat=None):
     '''Processes A-B files.
 
     1. Subtracts the two files and creates a A-B
@@ -359,21 +419,48 @@ def handle_AB(A, B, fine, outname=None, nsiglo=-1, nsighi=1, corrfile=None):
     if outname is None:
         outname = "%sm%s" % (A,B)
 
+
+
     if not outname.endswith(".fits"): outname = outname + ".fits"
-    diff = subtract(A,B, outname)
+    if flat is None:
+        diff = subtract(A,B, outname)
+    else:
+        temp = subtract(A,B, outname+".tmp.fits")
+        diff = divide(outname+".tmp.fits", flat, outname)
+        os.remove(outname+".tmp.fits")
+        
+
+    if Aoffset is not None:
+        ff = np.load(Aoffset)
+        flexure_x_corr_nm = ff[0]['dXnm']
+        flexure_y_corr_pix = ff[0]['dYpix']
+    else:
+        flexure_x_corr_nm = 0
+        flexure_y_corr_pix = 0
 
 
     exfile = "extracted_%s.npy" % outname
-    print "Checking if '%s.npy' exists" % outname
-    if not os.path.exists(outname + ".npy"):
-        E = Wavelength.wavelength_extract(diff, fine, filename=outname)
-        np.save(exfile, E)
-    else:
-        E = np.load(exfile)
+    #print "Checking if '%s.npy' exists" % outname
+    E = Wavelength.wavelength_extract(diff, fine, filename=outname,
+        flexure_x_corr_nm = flexure_x_corr_nm, 
+        flexure_y_corr_pix = flexure_y_corr_pix)
+    np.save(exfile, E)
 
     six = identify_spectra(E, low=nsiglo, hi=nsighi, outname=outname+".pdf")
-    res = interp_spectra(E, six, outname=outname+".pdf", corrfile=corrfile)
+    sixA, posA = identify_spectra_gui(E, radius=2)
+    sixB, posB = identify_spectra_gui(E, radius=2)
 
+    skyA = identify_bgd_spectra(E, posA)
+    skyB = identify_bgd_spectra(E, posB)
+
+    res = interp_spectra(E, six, outname=outname+".pdf", corrfile=corrfile)
+    resA = interp_spectra(E, sixA, outname=outname+"_A.pdf", corrfile=corrfile)
+    resB = interp_spectra(E, sixB, outname=outname+"_B.pdf", corrfile=corrfile)
+    skyA = interp_spectra(E, skyA, outname=outname+"_skyA.pdf", corrfile=corrfile)
+    skyB = interp_spectra(E, skyB, outname=outname+"_skYB.pdf", corrfile=corrfile)
+
+    
+    # TODO: ---> See Evernote 23 feb 2015
 
 
     np.save("sp_" + outname, res)
@@ -435,10 +522,10 @@ def handle_ABCD(A, B, C, D, fine, outname=None, nsiglo=-1, nsighi=1, corrfile=No
         offset=offset) 
 
 
-    sixA = identify_spectra_gui(Ae, outname=outname+"_A.pdf")
-    sixB = identify_spectra_gui(Be, outname=outname+"_B.pdf")
-    sixC = identify_spectra_gui(Ce, outname=outname+"_C.pdf")
-    sixD = identify_spectra_gui(De, outname=outname+"_D.pdf")
+    sixA, posA = identify_spectra_gui(Ae, outname=outname+"_A.pdf")
+    sixB, posB = identify_spectra_gui(Be, outname=outname+"_B.pdf")
+    sixC, posC = identify_spectra_gui(Ce, outname=outname+"_C.pdf")
+    sixD, posD = identify_spectra_gui(De, outname=outname+"_D.pdf")
 
     six1 = np.array(sixA.tolist() + sixB.tolist() )
     six2 = np.array(sixC.tolist() + sixD.tolist())
@@ -492,31 +579,35 @@ def handle_ABCD(A, B, C, D, fine, outname=None, nsiglo=-1, nsighi=1, corrfile=No
     np.save(outname + ".npy", result)
 
 
-parser = argparse.ArgumentParser(description=\
-    '''Extracter.py:
-
-        
-    ''', formatter_class=argparse.RawTextHelpFormatter)
-
-parser.add_argument('--A', type=str, help='FITS A file')
-parser.add_argument('--B', type=str, help='FITS B file')
-parser.add_argument('--C', type=str, help='FITS C file')
-parser.add_argument('--D', type=str, help='FITS B file')
-parser.add_argument('fine', type=str, help='Numpy fine wavelength solution')
-parser.add_argument('--outname', type=str, help='Prefix output name')
-parser.add_argument('--nsiglo', type=float, help='Number sigma to extract below', default=-2)
-parser.add_argument('--nsighi', type=float, help='Number sigma to extract above', default=2)
-parser.add_argument('--std', type=str, help='Name of standard')
-parser.add_argument('--correction', type=str, help='Name of atmospheric correction file')
-parser.add_argument('--Aoffset', type=str, help='Name of "A" file that holds flexure offset correction information')
-parser.add_argument('--Boffset', type=str, help='Name of "A" file that holds flexure offset correction information')
-parser.add_argument('--Coffset', type=str, help='Name of "A" file that holds flexure offset correction information')
-parser.add_argument('--Doffset', type=str, help='Name of "A" file that holds flexure offset correction information')
-
-args = parser.parse_args()
-
 if __name__ == '__main__':
     
+    parser = argparse.ArgumentParser(description=\
+        '''Extracter.py:
+
+            
+        ''', formatter_class=argparse.RawTextHelpFormatter)
+
+    parser.add_argument('--A', type=str, help='FITS A file')
+    parser.add_argument('--B', type=str, help='FITS B file')
+    parser.add_argument('--C', type=str, help='FITS C file')
+    parser.add_argument('--D', type=str, help='FITS B file')
+    parser.add_argument('--flat', type=str, help="FITS flat file")
+    parser.add_argument('fine', type=str, help='Numpy fine wavelength solution')
+    parser.add_argument('--outname', type=str, help='Prefix output name')
+    parser.add_argument('--nsiglo', type=float, help='Number sigma to extract below', default=-2)
+    parser.add_argument('--nsighi', type=float, help='Number sigma to extract above', default=2)
+    parser.add_argument('--std', type=str, help='Name of standard')
+    parser.add_argument('--correction', type=str, help='Name of atmospheric correction file')
+    parser.add_argument('--Aoffset', type=str, help='Name of "A" file that holds flexure offset correction information')
+    parser.add_argument('--Boffset', type=str, help='Name of "B" file that holds flexure offset correction information')
+    parser.add_argument('--Coffset', type=str, help='Name of "C" file that holds flexure offset correction information')
+    parser.add_argument('--Doffset', type=str, help='Name of "D" file that holds flexure offset correction information')
+
+    args = parser.parse_args()
+
+
+
+
     if args.outname is not None:
         args.outname = args.outname.rstrip('.npy')
 
@@ -525,20 +616,24 @@ if __name__ == '__main__':
         handle_ABCD(args.A, args.B, args.C, args.D, args.fine, 
                 outname=args.outname,
             nsiglo=args.nsiglo, nsighi=args.nsighi, corrfile=args.correction,
-            offset=args.offset)
+            offset=args.Aoffset)
 
     elif args.A is not None and args.B is not None:
+        print "Handle AB"
         handle_AB(args.A, args.B, args.fine, outname=args.outname,
-            nsiglo=args.nsiglo, nsighi=args.nsighi, corrfile=args.correction)
+            nsiglo=args.nsiglo, nsighi=args.nsighi, corrfile=args.correction,
+            Aoffset=args.Aoffset, Boffset=args.Boffset, flat=args.flat)
 
     elif args.A is not None:
         if args.std is None:
             handle_A(args.A, args.fine, outname=args.outname,
-                nsighi=args.nsighi, corrfile=args.correction)
+                nsighi=args.nsighi, corrfile=args.correction,
+                Aoffset=args.Aoffset)
         else:
             star = Stds.Standards[args.std]
             handle_A(args.A, args.fine, outname=args.outname,
-                nsighi=args.nsighi, standard=star)
+                nsighi=args.nsighi, standard=star,
+                Aoffset=args.Aoffset)
             
     else:
         print "I do not understand your intent, you must specify --A, at least"
