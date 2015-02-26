@@ -1626,10 +1626,12 @@ def save_fitted_ds9(fitted, outname='fine'):
 
     xs = []
     ys = []
-    xvals  = np.arange(250)
     ds9  = 'physical\n'
     for ix,S in enumerate(fitted):
-        if not S.__dict__.has_key('lamcoeff'): continue
+        if S.lamcoeff is None: continue
+        if S.xrange is None: continue
+
+        xvals = np.arange(*S.xrange)
 
         res = chebval(xvals, S.lamcoeff)
         invcoeffs = chebfit(res, xvals, 4)
@@ -1639,15 +1641,18 @@ def save_fitted_ds9(fitted, outname='fine'):
 
 
         for ix, px in enumerate(pxs):
-            X = px + startx
+            X = px 
             Y = np.poly1d(S.poly)(X)
-
             
             if ix == 3:
-                ds9 += 'point(%s,%s) # point=cross text={%s}\n' % \
+                ds9 += 'point(%s,%s) # point=cross text={%s} color=blue\n' % \
                     (X,Y, S.seg_id)
+            elif ix == 0:
+                ds9 += 'point(%s,%s) # point=box color=red\n' % (X,Y)
+            elif ix == 6:
+                ds9 += 'point(%s,%s) # point=circle color=red\n' % (X,Y)
             else:
-                ds9 += 'point(%s,%s) # point=cross\n' % (X,Y)
+                ds9 += 'point(%s,%s) # point=cross color=red\n' % (X,Y)
 
 
     f = open(outname+".reg", "w")
