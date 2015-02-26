@@ -136,7 +136,7 @@ DEBIAS = ~/spy /scr2/npk//PYTHON/SEDMr/Debias.py
 IMCOMBINE = ~/spy /scr2/npk//PYTHON/SEDMr/Imcombine.py
 
 BSUB = $(PY) $(PYC)/Bias.py
-BGDSUB =  $(PY) $(PYC)r/RemoveBackground.py
+BGDSUB =  $(PY) $(PYC)r/SubtractBackground.py
 CRRSUB =  /scr2/npk/Ureka/variants/common/bin/PyCosmic --fwhm=2 --iter 4 --rlim 0.8
 
 SRCS = $(wildcard ifu*fits)
@@ -160,7 +160,7 @@ $(CRRS):
 	$(CRRSUB) $(subst crr_,,$@) $@ mask$@ 5.0
 
 $(BACK): 
-	$(BGDSUB) $(subst bs_,,$@)
+	$(BGDSUB) fine.npy $(subst bs_,,$@)
     
 
 seg_dome.fits: dome.fits
@@ -172,8 +172,8 @@ seg_Hg.fits: Hg.fits
 dome.fits_segments.npy: seg_dome.fits
 	~/spy /scr2/npk/PYTHON/SEDMr/FindSpectra.py seg_dome.fits dome.fits dome.fits_segments
 
-rough.npy: dome.fits_segments.npy
-	~/spy /scr2/npk/PYTHON/SEDMr/Wavelength.py rough --hgfits Hg.fits --hgcat cat_Hg.fits.txt --dome dome.fits_segments.npy --outname rough --order 1
+rough.npy: dome.fits_segments.npy seg_Hg.fits
+	~/spy /scr2/npk/PYTHON/SEDMr/Wavelength.py rough --hgfits Hg.fits --hgcat cat_Hg.fits.txt --dome dome.fits_segments.npy --outname rough 
 
 fine.npy: rough.npy
 	~/spy /scr2/npk/PYTHON/SEDMr/Wavelength.py fine --xefits Xe.fits --hgfits Hg.fits --hgassoc assoc_Hg.npy --outname fine
@@ -181,8 +181,8 @@ fine.npy: rough.npy
 cube.npy: fine.npy
 	~/spy /scr2/npk/PYTHON/SEDMr/Cube.py fine.npy --step make --outname cube.npy
 
-flat.fits: twilight.fits
-	~/spy /scr2/npk/PYTHON/SEDMr/MakeFlat.py twilight.fits 
+flat.fits: twilight.fits dome.fits
+	~/spy /scr2/npk/PYTHON/SEDMr/MakeFlat.py twilight.fits --toflat2 dome.fits
 
 wave: fine.npy
 cube: cube.npy
