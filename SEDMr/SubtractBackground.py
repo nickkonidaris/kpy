@@ -7,6 +7,7 @@ import pylab as pl
 import pyfits as pf
 import sys
 
+import shutil
 
 import NPK.Fit as FF
 import NPK.Bar as Bar
@@ -18,6 +19,7 @@ from scipy.spatial import KDTree
 import scipy.signal as SG
 from scipy.interpolate import interp1d, interp2d, RectBivariateSpline, bisplrep, bisplev
 
+from scipy.ndimage.filters import gaussian_filter
 
 
 import SEDMr.Extraction as Extraction
@@ -101,6 +103,7 @@ def estimateBackground(fine, infile, flex=None, outname=None):
 
     infile[0].data = infile[0].data.astype(np.float64)
     data = infile[0].data.copy()
+    
 
     for ff in fine:
         if not ff.ok: continue
@@ -125,17 +128,23 @@ def estimateBackground(fine, infile, flex=None, outname=None):
     for i in xrange(5):
         flt = convolve(flt, k)
         flt[OKs] = data[OKs]
+        #IO.writefits(pf.PrimaryHDU(flt), "test_%i.fits.gz" % i, clobber=True)
 
     data[NaNs] = flt[NaNs]
+    fname = os.path.join(os.path.dirname(outname), 
+        "lf_" + os.path.basename(outname))
+    IO.writefits(data, fname, clobber=True)
+    
 
     print "FFT convolve (pass 2)"
-    k = Box2DKernel(100)
-    flt = convolve_fft(data, k)
+    #k = Box2DKernel(70)
+    #flt = convolve_fft(data, k)
+    flt = gaussian_filter(data, 100)
 
 
     fname = os.path.join(os.path.dirname(outname), 
         "bgd_" + os.path.basename(outname))
-    HDU = pf.PrimaryHDU(Util.floatcompress(flt))
+    HDU = pf.PrimaryHDU(flt)
     IO.writefits(HDU, fname, clobber=True)
     
 
@@ -165,6 +174,13 @@ if __name__ == '__main__':
     args = parser.parse_args()
     fine = np.load(args.fine)
     infile = pf.open(args.infile)
+
+    if infile[0].header['EXPTIME'] < 30:
+        fname = os.path.join(os.path.dirname(args.infile), 
+            "bs_" + os.path.basename(args.infile))
+        shutil.copy(args.infile, fname)
+        os.system("gzip --fast --force %s" % fname)
+        sys.exit(0)
 
     if args.flexfile is not None:
         flex = np.load(args.flexfile)
