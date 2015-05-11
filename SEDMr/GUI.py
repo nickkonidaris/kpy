@@ -22,7 +22,7 @@ class PositionPicker(object):
     pointsize = None
     picked = None
 
-    def __init__(self, spectra=None, figure=None, pointsize=50):
+    def __init__(self, spectra=None, figure=None, pointsize=50, bgd_sub=False):
         ''' Create spectum picking gui.
 
         Args:
@@ -34,7 +34,9 @@ class PositionPicker(object):
         self.pointsize = pointsize
 
         self.Xs, self.Ys, self.Vs = spectra.to_xyv()
-        
+
+        if bgd_sub:
+            self.Vs -= np.median(self.Vs)
 
         pl.ioff()
         self.figure = pl.figure(figure)
@@ -43,8 +45,7 @@ class PositionPicker(object):
         self.draw_cube()
 
     def draw_cube(self):
-        pl.scatter(self.Xs, self.Ys, c=self.Vs, s=self.pointsize,
-            vmin=-.2, vmax=.2)
+        pl.scatter(self.Xs, self.Ys, c=self.Vs, s=self.pointsize)
         pl.ylim(-30,30)
         pl.xlim(-30,30)
         pl.colorbar()

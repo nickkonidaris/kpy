@@ -88,6 +88,26 @@ class Extraction():
     X_as = None
     Y_as = None
 
+
+    def get_counts(self, the_spec='specw'):
+        ''' Returns [wavelength, counts] spectrum.
+
+        wavelength in nm
+        counts in raw counts
+        
+        Both are around 250 pixels long
+        
+        Args:
+            the_spec: Either 'spec' for the top-hat extracted
+                spectrum or 'specw' for the weighted 
+                (so called optimal) extraction.
+        '''
+        lam = self.get_lambda_nm()
+        sp = getattr(self, the_spec)
+        return [lam, sp]
+
+
+    
     def get_flambda(self, the_spec='specw'):
         ''' Returns [wavelength, Flambda] spectrum.
 
@@ -106,11 +126,7 @@ class Extraction():
         min = 60.0
         
         lam = self.get_lambda_nm()
-
-        if the_spec == 'spec':
-            ss = self.spec
-        else:
-            ss = self.specw
+        ss = getattr(self, the_spec)
 
         el_p10m = ss*(min*10)/self.exptime
         return [lam, el_p10m/dlam]
@@ -120,10 +136,7 @@ class Extraction():
         '''Returns lambda spectrum in nm'''
         xs = np.arange(*self.xrange)
         
-        if self.mdn_coeff is not None:
-            lam = chebval(xs, self.mdn_coeff)
-        else:
-            lam = chebval(xs, self.lamcoeff)
+        lam = chebval(xs, self.lamcoeff)
 
         return lam
 
@@ -134,10 +147,7 @@ class Extraction():
         # by diff
         xs = np.arange(self.xrange[0], self.xrange[1]+1)
 
-        if self.mdn_coeff is not None:
-            lam = chebval(xs, self.mdn_coeff)
-        else:
-            lam = chebval(xs, self.lamcoeff)
+        lam = chebval(xs, self.lamcoeff)
         dlam = np.abs(np.diff(lam))
         
 

@@ -50,6 +50,6 @@ if __name__ == '__main__':
         raise Exception("not enough arguments")
         
 
-    go(sys.argv[1:-2], sys.argv[-1])
+    go(sys.argv[1:-1], sys.argv[-1])
         
 

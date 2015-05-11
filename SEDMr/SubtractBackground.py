@@ -133,7 +133,7 @@ def estimateBackground(fine, infile, flex=None, outname=None):
     data[NaNs] = flt[NaNs]
     fname = os.path.join(os.path.dirname(outname), 
         "lf_" + os.path.basename(outname))
-    IO.writefits(data, fname, clobber=True)
+    #IO.writefits(data, fname, clobber=True)
     
 
     print "FFT convolve (pass 2)"

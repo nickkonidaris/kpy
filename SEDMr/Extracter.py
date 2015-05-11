@@ -1,9 +1,10 @@
 
-import argparse, os, pdb, sys
+import argparse, copy, os, pdb, sys
 import numpy as np
 import pylab as pl
 import pyfits as pf
 import scipy.signal as SG
+import itertools
 
 
 from numpy.polynomial.chebyshev import chebfit, chebval
@@ -13,16 +14,13 @@ import SEDMr.Wavelength as Wavelength
 import SEDMr.Spectra as SS
 import SEDMr.GUI as GUI
 import NPK.Standards as Stds
-reload(Wavelength)
-reload(Extraction)
-reload(GUI)
-reload(SS)
 
 def identify_spectra_gui(spectra, outname=None, radius=2):
     
+    print "Looking in a %s as circle" % radius
     pl.ioff()
     KT = SS.Spectra(spectra)
-    g = GUI.PositionPicker(KT)
+    g = GUI.PositionPicker(KT, bgd_sub=True)
     pos  = g.picked
 
     kix = KT.KT.query_ball_point(pos, radius)
@@ -31,7 +29,7 @@ def identify_spectra_gui(spectra, outname=None, radius=2):
 
     return KT.good_positions[kix], pos
 
-def identify_bgd_spectra(spectra, pos, inner=3, outer=6):
+def identify_bgd_spectra(spectra, pos, inner=3, outer=4):
     KT = SS.Spectra(spectra)
 
     objs = KT.good_positions[KT.KT.query_ball_point(pos, r=inner)]
@@ -59,7 +57,7 @@ def identify_spectra(spectra, outname=None, low=-np.inf, hi=np.inf, plot=False):
             ixs.append(ix)
             segids.append(spectrum.seg_id)
 
-            try: l,s = spectrum.get_flambda(the_spec='specw')
+            try: l,s = spectrum.get_counts(the_spec='specw')
             except: 
                 ms.append(0)
                 continue
@@ -101,10 +99,13 @@ def identify_spectra(spectra, outname=None, low=-np.inf, hi=np.inf, plot=False):
     f.write(ds9)
     f.close()
 
+    to_image(outname)
 
-    XS = [seg.X_as for seg in spectra]
-    YS = [seg.Y_as for seg in spectra]
 
+    return ixs[ok]
+
+def to_image(spectra, outname):
+    ''' Convert spectra list into image_[outname].pdf '''
     def Strength(x):
         if x.xrange is None: return None
         if x.lamcoeff is None: return None
@@ -120,19 +121,21 @@ def identify_spectra(spectra, outname=None, low=-np.inf, hi=np.inf, plot=False):
 
     sig = [Strength(seg) for seg in spectra]
 
-    pl.clf()
-    XS = np.array(XS, dtype=np.float)
-    YS = np.array(YS, dtype=np.float)
+    XS = np.array([seg.X_as for seg in spectra])
+    YS = np.array([seg.Y_as for seg in spectra])
     sig = np.array(sig, dtype=np.float)
 
-    pl.scatter(XS, YS, c=sig,s=60,marker='h')
+
+    pl.clf()
+    pl.ylim(-30,30)
+    pl.xlim(-30,30)
+    pl.scatter(XS, YS, c=sig,s=30,marker='H',linewidth=.2)
     pl.xlabel("X [as]")
     pl.ylabel("Y [as]")
     pl.colorbar()
     pl.savefig("image_%s.pdf" % outname)
+    pl.close()
 
-
-    return ixs[ok]
         
 def c_to_nm(coefficients, pix, offset=0):
     
@@ -140,7 +143,7 @@ def c_to_nm(coefficients, pix, offset=0):
     t[0] += offset
     return chebval(pix, t)
 
-def interp_spectra(all_spectra, six, outname=None, plot=False,
+def interp_spectra(all_spectra, six, sign=1., outname=None, plot=False,
     corrfile=None, dnm=0):
     '''Interp spectra onto common grid
 
@@ -155,7 +158,7 @@ def interp_spectra(all_spectra, six, outname=None, plot=False,
     for ix,spectrum in enumerate(all_spectra):
         if ix not in six: continue
 
-        l,s = spectrum.get_flambda(the_spec='specw')
+        l,s = spectrum.get_counts(the_spec='specw')
         pix = np.arange(*spectrum.xrange)
 
         if spectrum.mdn_coeff is not None: cs = spectrum.mdn_coeff
@@ -163,8 +166,7 @@ def interp_spectra(all_spectra, six, outname=None, plot=False,
         l = c_to_nm(cs, pix, offset=dnm)
         if l.max() - l.min() < 300: continue
 
-        if np.median(s) < 0: pon = -1.0
-        else: pon = 1.0
+        pon = sign
 
         if l_grid is None:
             l_grid = l
@@ -178,6 +180,7 @@ def interp_spectra(all_spectra, six, outname=None, plot=False,
             
             
     medspec = np.mean(s_grid, 0)
+
 
     pl.figure(3)
     pl.clf()
@@ -216,8 +219,12 @@ def interp_spectra(all_spectra, six, outname=None, plot=False,
         "coefficients": lamcoeff, 
         "doc": doc}]
 
+    CC = None
     if corrfile is not None:
-        CC = np.load(corrfile)[0]
+        try: CC = np.load(corrfile)[0]
+        except: CC = None
+
+    if CC is not None:
         corrfun = chebval(l_grid, CC['coeff'])
         corrfun /= np.nanmin(corrfun)
         corrfun = interp1d(CC['nm'], CC['cor'], bounds_error=False, fill_value=np.nan)
@@ -232,6 +239,7 @@ def interp_spectra(all_spectra, six, outname=None, plot=False,
         pl.grid(True)
         if outname is not None: pl.savefig("corr_spec_%s" % outname)
         if plot: pl.show()
+
 
     pl.figure(2)
 
@@ -254,29 +262,47 @@ def imarith(operand1, op, operand2, result):
     iraf.imarith(operand1=operand1, op=op, operand2=operand2, result=result)
 
     iraf.imarith.setParList(pars)   
+
+def gunzip(A, B):
+    if A.endswith(".gz"):
+        os.system("gunzip %s" % A)
+    if B.endswith(".gz"):
+        os.system("gunzip %s" % B)
+
+    return A.rstrip(".gz"), B.rstrip(".gz")
+
+def gzip(A,B):
+    if not A.endswith(".gz"):
+        os.system("gzip %s" % A)
+    if not B.endswith(".gz"):
+        os.system("gzip %s" % B)
+
+    return A+".gz", B+".gz"
     
 def add(A,B, outname):
-    if os.path.exists(outname):
-        return pf.open(outname)
-
+    A,B = gunzip(A,B)
     imarith(A, "+", B, outname)
+    gzip(A,B)
+
     return pf.open(outname)
 
 def subtract(A,B, outname):
     if os.path.exists(outname):
         return pf.open(outname)
 
+    A,B = gunzip(A,B)
     imarith(A, "-", B, outname)
+    A,B = gzip(A,B)
 
     return pf.open(outname)
 
 def divide(A,B, outname):
-    if os.path.exists(outname):
-        return pf.open(outname)
-
+    A,B = gunzip(A,B)
     imarith(A, "/", B, outname)
+    gzip(A,B)
 
     return pf.open(outname)
+
 
 def combines(A,B,C,D, outname):
     ''' Creates outname with A+B+C+D '''
@@ -332,7 +358,7 @@ def bgd_level(extractions):
         if spectrum.__dict__.has_key('spec') and spectrum.spec is not None \
             and spectrum.lamcoeff is not None:
         
-            l, Fl = spectrum.get_flambda(the_spec='specw')
+            l, Fl = spectrum.get_counts(the_spec='specw')
 
             levels.append(np.median(Fl))
 
@@ -362,7 +388,7 @@ def handle_extract(data, outname=None, fine='fine.npy',flexure_x_corr_nm=0.0,
     return E
 
 def handle_A(A, fine, outname=None, nsighi=2, standard=None, corrfile=None,
-    Aoffset=None):
+    Aoffset=None, radius=2):
     '''Processes A files.
 
     1. Extracts the spectra from the A file
@@ -388,8 +414,11 @@ def handle_A(A, fine, outname=None, nsighi=2, standard=None, corrfile=None,
     np.save(outname, E)
 
 
-    six = identify_spectra(E, hi=nsighi, outname=outname+".pdf")
+    to_image(E, outname)
+    six, pos = identify_spectra_gui(E, radius=radius)
+    skyix = identify_bgd_spectra(E, pos)
     res = interp_spectra(E, six, outname=outname+".pdf", corrfile=corrfile)
+    sky = interp_spectra(E, skyix, outname=outname+"_sky.pdf", corrfile=corrfile)
     
     if standard is not None:
         print "STANDARD"
@@ -402,12 +431,16 @@ def handle_A(A, fine, outname=None, nsighi=2, standard=None, corrfile=None,
         res[0]['std-correction'] = correction
 
 
+    ff = interp1d(sky[0]['nm'], sky[0]['ph_10m_nm'], bounds_error=False)
+    res[0]['skynm'] = sky[0]['nm']
+    res[0]['skyph'] = sky[0]['ph_10m_nm']
+    res[0]['ph_10m_nm'] -= ff(res[0]['nm'])
     np.save("spectrum_" + outname, res)
 
 
 
 def handle_AB(A, B, fine, outname=None, nsiglo=-1, nsighi=1, corrfile=None,
-    Aoffset=None, Boffset=None, flat=None):
+    Aoffset=None, Boffset=None, radius=2):
     '''Processes A-B files.
 
     1. Subtracts the two files and creates a A-B
@@ -419,16 +452,16 @@ def handle_AB(A, B, fine, outname=None, nsiglo=-1, nsighi=1, corrfile=None,
     if outname is None:
         outname = "%sm%s" % (A,B)
 
-
-
     if not outname.endswith(".fits"): outname = outname + ".fits"
-    if flat is None:
-        diff = subtract(A,B, outname)
-    else:
-        temp = subtract(A,B, outname+".tmp.fits")
-        diff = divide(outname+".tmp.fits", flat, outname)
-        os.remove(outname+".tmp.fits")
-        
+    diff = subtract(A,B, outname)
+    add(A,B, "tmpvar_" + outname)
+
+    adcspeed = diff[0].header["ADCSPEED"]
+    if adcspeed == 2: read_var = 22*22
+    else: read_var = 5*5
+
+    var = add("tmpvar_" + outname, str(read_var), "var_" + outname)
+    os.remove("tmpvar_" + outname + ".gz")
 
     if Aoffset is not None:
         ff = np.load(Aoffset)
@@ -440,27 +473,82 @@ def handle_AB(A, B, fine, outname=None, nsiglo=-1, nsighi=1, corrfile=None,
 
 
     exfile = "extracted_%s.npy" % outname
-    #print "Checking if '%s.npy' exists" % outname
     E = Wavelength.wavelength_extract(diff, fine, filename=outname,
         flexure_x_corr_nm = flexure_x_corr_nm, 
         flexure_y_corr_pix = flexure_y_corr_pix)
     np.save(exfile, E)
 
-    six = identify_spectra(E, low=nsiglo, hi=nsighi, outname=outname+".pdf")
-    sixA, posA = identify_spectra_gui(E, radius=2)
-    sixB, posB = identify_spectra_gui(E, radius=2)
+    exfile = "extracted_var_%s.npy" % outname
+    E_var = Wavelength.wavelength_extract(var, fine, filename=outname,
+        flexure_x_corr_nm = flexure_x_corr_nm, 
+        flexure_y_corr_pix = flexure_y_corr_pix)
+    np.save(exfile, E)
+
+    to_image(E, outname)
+    sixA, posA = identify_spectra_gui(E, radius=radius)
+    sixB, posB = identify_spectra_gui(E, radius=radius)
 
     skyA = identify_bgd_spectra(E, posA)
     skyB = identify_bgd_spectra(E, posB)
 
-    res = interp_spectra(E, six, outname=outname+".pdf", corrfile=corrfile)
-    resA = interp_spectra(E, sixA, outname=outname+"_A.pdf", corrfile=corrfile)
-    resB = interp_spectra(E, sixB, outname=outname+"_B.pdf", corrfile=corrfile)
-    skyA = interp_spectra(E, skyA, outname=outname+"_skyA.pdf", corrfile=corrfile)
-    skyB = interp_spectra(E, skyB, outname=outname+"_skYB.pdf", corrfile=corrfile)
-
+    allix = np.concatenate([sixA, sixB])
+    resA = interp_spectra(E, sixA, sign=1, outname=outname+"_A.pdf", corrfile=corrfile)
+    resB = interp_spectra(E, sixB, sign=-1, outname=outname+"_B.pdf", corrfile=corrfile)
+    skyA = interp_spectra(E, skyA, sign=1, outname=outname+"_skyA.pdf", corrfile=corrfile)
+    skyB = interp_spectra(E, skyB, sign=-1, outname=outname+"_skYB.pdf", corrfile=corrfile)
+    varA = interp_spectra(E_var, sixA, sign=1, outname=outname+"_A_var.pdf", corrfile=corrfile)
+    varB = interp_spectra(E_var, sixB, sign=1, outname=outname+"_B_var.pdf", corrfile=corrfile)
     
-    # TODO: ---> See Evernote 23 feb 2015
+
+
+        
+    ## Plot out the X/Y selected spectra
+    XSA = []
+    YSA = []
+    XSB = []
+    YSB = []
+    for ix in sixA:
+        XSA.append(E[ix].X_as)
+        YSA.append(E[ix].Y_as)
+    for ix in sixB:
+        XSB.append(E[ix].X_as)
+        YSB.append(E[ix].Y_as)
+
+    pl.figure()
+    pl.clf()
+    pl.ylim(-30,30)
+    pl.xlim(-30,30)
+    pl.scatter(XSA,YSA, color='blue', marker='H', linewidth=.1)
+    pl.scatter(XSB,YSB, color='red', marker='H', linewidth=.1)
+    pl.savefig("XYs_%s.pdf" % outname)
+    pl.close()
+    # / End Plot
+
+    np.save("sp_A_" + outname, resA)
+    np.save("sp_B_" + outname, resB)
+    np.save("var_A_" + outname, varA)
+    np.save("var_B_" + outname, varB)
+
+    ll = Wavelength.fiducial_spectrum()
+    sky_A = interp1d(skyA[0]['nm'], skyA[0]['ph_10m_nm'], bounds_error=False)
+    sky_B = interp1d(skyB[0]['nm'], skyB[0]['ph_10m_nm'], bounds_error=False)
+
+    sky = np.nanmean([sky_A(ll), sky_B(ll)], axis=0)
+
+    res = copy.copy(resA)
+    res[0]['nm'] = ll
+    f1 = interp1d(resA[0]['nm'], resA[0]['ph_10m_nm'], bounds_error=False)
+    f2 = interp1d(resB[0]['nm'], resB[0]['ph_10m_nm'], bounds_error=False)
+    res[0]['ph_10m_nm'] = np.nanmean([f1(ll)-sky_A(ll), f2(ll)-sky_B(ll)], axis=0)
+
+    res[0]['skyph'] = sky
+    res[0]['var'] = np.nanmean([varA[0]['ph_10m_nm'] , varB[0]['ph_10m_nm']], 0)
+
+    coef = chebfit(np.arange(len(ll)), ll, 4)
+    xs = np.arange(len(ll)+1)
+    newll = chebval(xs, coef)
+
+    res[0]['dlam'] = np.diff(newll)
 
 
     np.save("sp_" + outname, res)
@@ -591,7 +679,6 @@ if __name__ == '__main__':
     parser.add_argument('--B', type=str, help='FITS B file')
     parser.add_argument('--C', type=str, help='FITS C file')
     parser.add_argument('--D', type=str, help='FITS B file')
-    parser.add_argument('--flat', type=str, help="FITS flat file")
     parser.add_argument('fine', type=str, help='Numpy fine wavelength solution')
     parser.add_argument('--outname', type=str, help='Prefix output name')
     parser.add_argument('--nsiglo', type=float, help='Number sigma to extract below', default=-2)
@@ -602,6 +689,7 @@ if __name__ == '__main__':
     parser.add_argument('--Boffset', type=str, help='Name of "B" file that holds flexure offset correction information')
     parser.add_argument('--Coffset', type=str, help='Name of "C" file that holds flexure offset correction information')
     parser.add_argument('--Doffset', type=str, help='Name of "D" file that holds flexure offset correction information')
+    parser.add_argument('--radius_as', type=float, help='Extraction radius in arcsecond', default=3)
 
     args = parser.parse_args()
 
@@ -622,18 +710,19 @@ if __name__ == '__main__':
         print "Handle AB"
         handle_AB(args.A, args.B, args.fine, outname=args.outname,
             nsiglo=args.nsiglo, nsighi=args.nsighi, corrfile=args.correction,
-            Aoffset=args.Aoffset, Boffset=args.Boffset, flat=args.flat)
+            Aoffset=args.Aoffset, Boffset=args.Boffset, 
+            radius=args.radius_as)
 
     elif args.A is not None:
         if args.std is None:
             handle_A(args.A, args.fine, outname=args.outname,
                 nsighi=args.nsighi, corrfile=args.correction,
-                Aoffset=args.Aoffset)
+                Aoffset=args.Aoffset, radius=args.radius_as)
         else:
             star = Stds.Standards[args.std]
             handle_A(args.A, args.fine, outname=args.outname,
                 nsighi=args.nsighi, standard=star,
-                Aoffset=args.Aoffset)
+                Aoffset=args.Aoffset, radius=args.radius_as)
             
     else:
         print "I do not understand your intent, you must specify --A, at least"

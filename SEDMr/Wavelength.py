@@ -122,16 +122,16 @@ def hg_to_kdtree(assoc_hg_spec):
     data = np.array([xs,ys])
     return KDTree(data.T), np.array(ids)
 
-def fiducial_spectrum(lamstart=1000.0, lamratio=239./240., len=250):
+def fiducial_spectrum(lamstart=1050.0, lamratio=239./240., len=265):
     '''Return a typical SED Machine spectrum, use for interpolating on grid
 
                                         x
     Equation looks like 1000 x (239/240)
 
     Args:
-        lamstart(float): default is 1000 nm
+        lamstart(float): default is 1050 nm
         lamratio(float): default is 239/240, good for SEDM
-        len(int): default of 250 yields a spectrum that goes to ~ 350 nm'''
+        len(int): default of 265 yields a spectrum that goes to ~ 350 nm'''
 
     xx = np.arange(len)
 
@@ -377,8 +377,8 @@ def wavelength_extract_helper(SS):
 
     ex = Extraction.Extraction(xrange=(minx,maxx), yrange=(yfun(xpos[0]),
                                 yfun(xpos[-1])),
-                                poly=ss.poly, spec=res/exptime,
-                                specw=resw/exptime,
+                                poly=ss.poly, spec=res,
+                                specw=resw,
                                 seg_id=ss.seg_id, exptime=exptime, ok=True,
                                 trace_sigma=ss.trace_sigma, Q_ix=ss.Q_ix,
                                 R_ix=ss.R_ix, X_as=ss.X_as, Y_as=ss.Y_as)
@@ -396,6 +396,7 @@ def wavelength_extract_helper(SS):
     if ex.lamrms is not None:
         print "%4.4i %1.3f" % (ex.seg_id, ex.lamrms)
     return ex
+
 
 def wavelength_extract(HDUlist_par, wavecalib_par, filename='extracted_spectra.npy',
     flexure_x_corr_nm = 0.0, flexure_y_corr_pix = 0.0, extract_width_par=3):

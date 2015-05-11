@@ -42,7 +42,7 @@ def sedm_wavelen(p, x):
     return A*B**x  + C*(x-D)**1 
 
 
-def mpfit_residuals(modelfun):
+def mpfit_residuals(modelfun, preffun=None):
     '''Returns a residual function for mpfit code'''
 
     def fun(param, fjac=None, x=None, y=None, error=None):
@@ -50,10 +50,16 @@ def mpfit_residuals(modelfun):
         model = modelfun(param, x)
         status = 0
 
-        if error is None:
-            return [status, y-model]
+        if preffun is not None:
+            # There is a parameter prefernece
+            prefval = preffun(param)
+        else:
+            prefval = 1.0
 
-        return [status, (y-model)/error]
+        if error is None:
+            return [status, (y-model) * prefval]
+
+        return [status, (y-model)/error*prefval]
 
     return fun
 

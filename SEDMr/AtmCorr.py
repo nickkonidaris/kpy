@@ -60,7 +60,7 @@ def handle_corr(filename, outname='std-correction.npy', objname=None) :
 
 
 parser = argparse.ArgumentParser(description=\
-    '''Extracter.py:
+    '''
 
         
     ''', formatter_class=argparse.RawTextHelpFormatter)
@@ -82,7 +82,6 @@ if __name__ == '__main__':
         handle_corr(args.A, outname=args.outname, objname=args.std)
 
     if args.process == 'SUM':
-        # Take atmospheric correction out and store in a separate file
         handle_summary(outname=args.outname, filelist=args.files)
  
 

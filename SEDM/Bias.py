@@ -4,13 +4,12 @@ import pyfits as pf
 import scipy.ndimage.filters as FI
 # Bias Subtraction
 
-from pylab import *
 
 def full_frame(dat):
 
-    bias = np.median(dat[2045:,:], axis=0)
+    bias = np.median(dat[:,2045:], axis=1)
     bias = bias.astype(np.float)
-    smooth = FI.median_filter(bias, size=30)
+    smooth = FI.median_filter(bias, size=50)
 
     return np.tile(smooth, (2048,1))
 
@@ -46,10 +45,17 @@ if __name__ == '__main__':
             continue
         print file
         FF = pf.open(file)
+        adcspeed = FF[0].header['ADCSPEED']
+
+        bfname = "bias%1.1f.fits" % adcspeed
+        bias = pf.open(bfname)
+
+        FF[0].data -= bias[0].data
         FF[0].data = remove(FF)
 
         outname = add_prefix(file)
-        FF[0].header['BIASSUB'] = ('Subtracted', 'Bias subtracted with Bias.py')
+        FF[0].header['BIASSUB'] = ('Subtracted', 'Ovrscn + bias handled by Bias.py')
+        FF[0].header['BIASSUB2'] = (bfname , 'Bias file used')
         try: 
             GAIN = FF[0].header['GAIN']
             FF[0].header['GAIN'] = (1.0, 'GAIN Adjusted (was %s)' % GAIN)

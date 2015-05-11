@@ -47,6 +47,8 @@ class Spectra(object):
             positions.append( (x,y) )
 
         data = np.array(positions)
+        bad = (data != data)
+        data[bad] = -999
         self.KT = scipy.spatial.KDTree(data)
         self.good_positions = np.array(good_positions)
 

@@ -67,17 +67,18 @@ def QR_to_img(exts, Size=2, outname="cube.fits"):
 
     Dx = maxx-minx
     Dy = maxy-miny
-    l_grid = 1050.*(239/240.)**np.arange(266)
-    dl_grid = -np.diff(l_grid)
+    l_grid = Wavelength.fiducial_spectrum()
+    l_grid = l_grid[::-1]
+    dl_grid = np.diff(l_grid)
     l_grid = l_grid[1:]
 
-    img = np.zeros((Dx, Dy, len(l_grid)))
+    img = np.zeros((Dx, Dy, len(l_grid)/2))
     img[:] = np.nan
 
     XSz = img.shape[0]/2
     YSz = img.shape[1]/2
 
-    allspec = np.zeros((len(exts), len(l_grid)))
+    allspec = np.zeros((len(exts), len(l_grid)/2))
     for cnt, ext in enumerate(exts):
         if ext.xrange is None: continue
         if ext.exptime is None: ext.exptime = 1
@@ -89,6 +90,7 @@ def QR_to_img(exts, Size=2, outname="cube.fits"):
 
         f = interp1d(l, s, fill_value=np.nan, bounds_error=False)
         fi = f(l_grid) / dl_grid
+        fi = fi[0:len(fi):2] + fi[1:len(fi):2]
 
         allspec[cnt, :] = fi
 
@@ -120,10 +122,15 @@ def QR_to_img(exts, Size=2, outname="cube.fits"):
         s = ext.specw 
 
         f = interp1d(l, s, fill_value=np.nan, bounds_error=False)
-        fi = f(l_grid)/dl_grid - back
+        fi = f(l_grid)/dl_grid 
+        fi = fi[0:len(fi):2] + fi[1:len(fi):2] - back
 
-        x = np.round(Size*np.sqrt(3.) * (ext.Q_ix + ext.R_ix/2)) + XSz
-        y = np.round(Size*3./2. * ext.R_ix) + YSz
+
+        try:
+            x = np.round(Size*np.sqrt(3.) * (ext.Q_ix + ext.R_ix/2)) + XSz
+            y = np.round(Size*3./2. * ext.R_ix) + YSz
+        except:
+            continue
         try: 
             for dx in [-1,0,1]:
                 for dy in [-1,0,1]:
