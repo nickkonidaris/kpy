@@ -296,6 +296,47 @@ def find_hg_spectra(lines, dYlimit=2, outname="find_spectra"):
 
     return res[0]
 
+def fractional_sum(FS_Y, FS_EW, FS_dat, FS_Yx1):
+    ''' Returns sum of FS_dat via a partial-pixel method.
+
+    Args:
+        FS_Y(float): location of trace in vertical direciton
+        FS_EW(float): Width of trace around FS_Y
+        FS_dat(float vector): Data to sum
+        FS_Yx1(float): Start location of data
+
+    Returns:
+        Float containing the sum of data in FS_Y while taking partial
+            pixels into account.
+
+    Raises:
+        Nothing.
+    '''
+
+    nn = len(FS_dat)
+    YB1 = FS_Y - FS_EW
+    YB2 = FS_Y + FS_EW
+    FSsum = 0.0
+    for ii in range(nn):
+        Yp1 = float(ii+FS_Yx1) - 0.5
+        Yp2 = float(ii+FS_Yx1) + 0.5
+        frac= 0.0
+        # fully contained?
+        if Yp1 > YB1 and Yp2 < YB2:
+            frac = 1.0
+        # pixel surrounds left boundary
+        elif Yp1 < YB1 and Yp2 > YB1:
+            frac = (Yp2 - YB1) / (Yp2 - Yp1)
+        # pixel surrounds right boundary
+        elif Yp2 > YB2 and Yp1 < YB2:
+            frac = (YB2 - Yp1) / (Yp2 - Yp1)
+
+        FSsum = FSsum + (frac * FS_dat[ii])
+
+    return FSsum
+
+
+
 def wavelength_extract_helper(SS):
     global dat, exptime, wavecalib, HDUlist, extract_width
 
@@ -316,6 +357,8 @@ def wavelength_extract_helper(SS):
     res[:] = np.nan
     resw = np.zeros(len(xpos))
     resw[:] = np.nan
+    resf = np.zeros(len(xpos))
+    resf[:] = np.nan
     sigma2 = ss.trace_sigma * ss.trace_sigma
     if np.isnan(sigma2): sigma2 = 4.
 
@@ -334,6 +377,11 @@ def wavelength_extract_helper(SS):
             np.max((0,np.round(Y)+flexure_y_corr_pix-extract_width)),
             np.min((np.round(Y)+flexure_y_corr_pix+extract_width+1, 2047)))
 
+        # Expanded slice for fracitonal pixels
+        Yx = slice(
+            np.max((0,np.round(Y)+flexure_y_corr_pix-extract_width-1)),
+            np.min((np.round(Y)+flexure_y_corr_pix+extract_width+2, 2047)))
+
         profile = np.arange(np.round(Ys.stop)-np.round(Ys.start))
 
         NNN = dat[Ys,X].shape[0]
@@ -344,11 +392,14 @@ def wavelength_extract_helper(SS):
 
         res[i] = np.sum(dat[Ys,X])
         resw[i]= np.sum(dat[Ys,X]*profile)
+        resf[i]= fractional_sum(Y, extract_width, dat[Yx,X], Yx.start)
+
 
     ex = Extraction.Extraction(xrange=(minx,maxx), yrange=(yfun(xpos[0]),
                                 yfun(xpos[-1])),
                                 poly=ss.poly, spec=res,
                                 specw=resw,
+                                specf=resf,
                                 seg_id=ss.seg_id, exptime=exptime, ok=True,
                                 trace_sigma=ss.trace_sigma, Q_ix=ss.Q_ix,
                                 R_ix=ss.R_ix, X_as=ss.X_as, Y_as=ss.Y_as)
