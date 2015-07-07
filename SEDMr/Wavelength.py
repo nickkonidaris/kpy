@@ -192,43 +192,13 @@ def assoc_hg_with_flats(domedat_par, hgcat_par, guess_offset_par= {365.0: 231,
     p.close()
 
     for idx, spec_pos in enumerate(domedat):
-        if results[idx] is None: continue
+        if results[idx] is None: 
+            continue
 
         for wave, pos in results[idx].iteritems():
             spec_pos[wave] = pos
 
     np.save("%s.npy" % outname, [domedat])
-    return spec_pos
-
-    for idx,spec_pos in enumerate(domedat):
-        if not spec_pos['ok']: continue
-        tracefun = np.poly1d(spec_pos['coeff_ys'])
-        minx = spec_pos['xs'][0]
-        
-
-        for wavelen,v in wavetrees.iteritems():
-            offset = guess_offset[wavelen]
-            pt = (minx + offset, tracefun(minx+offset))
-            results = v.query_ball_point(pt, 15)
-
-            for res in results:
-                x_hg,y_hg = v.data[res]
-                y_trace = tracefun(x_hg)
-
-                if np.abs(y_hg - y_trace) < 3:
-                    spec_pos[wavelen] = x_hg
-                    if wavelen == 578.0:
-                        reg += 'point(%s,%s) # point=x 5 text={%s}\n' % (x_hg, y_trace, spec_pos['seg_cnt'])
-                    else:
-                        reg += 'point(%s,%s) # point=x 5\n' % (x_hg, y_trace)
-
-    Bar.done()
-    f = open("%s.reg" % outname, "w")
-    f.write(reg)
-    f.close()
-
-    np.save("%s.npy" % outname, [domedat])
-
     return spec_pos
 
 
@@ -361,8 +331,8 @@ def wavelength_extract_helper(SS):
         # slice[-2:3] will return elements -2 to +2 around 0
         # e.g. len(slice[-2:3]) == 5
         Ys = slice(
-            np.max((0,np.int(Y)+flexure_y_corr_pix-extract_width)),
-            np.min((np.int(Y)+flexure_y_corr_pix+extract_width+1, 2047)))
+            np.max((0,np.round(Y)+flexure_y_corr_pix-extract_width)),
+            np.min((np.round(Y)+flexure_y_corr_pix+extract_width+1, 2047)))
 
         profile = np.arange(np.round(Ys.stop)-np.round(Ys.start))
 
