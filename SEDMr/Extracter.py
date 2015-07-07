@@ -387,12 +387,31 @@ def handle_extract(data, outname=None, fine='fine.npy',flexure_x_corr_nm=0.0,
 
     return E
 
-def handle_A(A, fine, outname=None, nsighi=2, standard=None, corrfile=None,
+def handle_A(A, fine, outname=None, standard=None, corrfile=None,
     Aoffset=None, radius=2):
-    '''Processes A files.
+    '''Loads 2k x 2k IFU frame "A" and extracts spectra from the locations
+    in "fine". 
 
-    1. Extracts the spectra from the A file
-    2. Identifies the object as some multiple of the sigma'''
+    Args:
+        A (string): filename of ifu FITS file to extract from.
+        fine (string): filename of NumPy file with locations + wavelength
+            soln
+        outname (string): filename to write results to
+        Aoffset (2tuple): X (nm)/Y (pix) shift to apply for flexure correction
+        radius (float): Extraction radius in arcsecond
+
+    Returns:
+        The extracted spectrum, a dictionary:
+        {'ph_10m_nm': Flux in photon / 10 m / nanometer integrated
+        'nm': Wavelength solution in nm
+        'N_spax': Total number of spaxels that created ph_10m_nm
+        'skyph': Sky flux in photon / 10 m / nanometer / spaxel
+        'radius_as': Extraction radius in arcsec
+        'pos': X/Y extraction location of spectrum in arcsec}
+
+    Raises:
+        None
+    '''
 
     fine = np.load(fine)
     if outname is None:
@@ -432,21 +451,51 @@ def handle_A(A, fine, outname=None, nsighi=2, standard=None, corrfile=None,
 
 
     ff = interp1d(sky[0]['nm'], sky[0]['ph_10m_nm'], bounds_error=False)
+    skybgd = ff(sky[0]['nm'])
+
     res[0]['skynm'] = sky[0]['nm']
     res[0]['skyph'] = sky[0]['ph_10m_nm']
-    res[0]['ph_10m_nm'] -= ff(res[0]['nm'])
+
+    res[0]['ph_10m_nm'] -= skybgd
+    res[0]['ph_10m_nm'] *= len(six)
+
+    res[0]['radius_as'] = radius
+    res[0]['position'] = pos
+    res[0]['N_spax'] = len(six)
+
     np.save("spectrum_" + outname, res)
 
 
 
-def handle_AB(A, B, fine, outname=None, nsiglo=-1, nsighi=1, corrfile=None,
+def handle_AB(A, B, fine, outname=None, corrfile=None,
     Aoffset=None, Boffset=None, radius=2):
-    '''Processes A-B files.
+    '''Loads 2k x 2k IFU frame "A" and "B" and extracts A-B and A+B spectra
+    from the "fine" location. 
 
-    1. Subtracts the two files and creates a A-B
-    2. Extracts the spectra from the A-B file
-    3. Identifies the object as some multiple of the sigma'''
+    Args:
+        A (string): filename of ifu FITS file to extract from.
+        B (string): filename of ifu FITS file to extract from.
+        fine (string): filename of NumPy file with locations + wavelength
+            soln
+        outname (string): filename to write results to
+        Aoffset (2tuple): X (nm)/Y (pix) shift to apply for flexure correction
+        Boffset (2tuple): X (nm)/Y (pix) shift to apply for flexure correction
+        radius (float): Extraction radius in arcsecond
 
+    Returns:
+        The extracted spectrum, a dictionary:
+        {'ph_10m_nm': Flux in photon / 10 m / nanometer integrated
+        'var'
+        'nm': Wavelength solution in nm
+        'N_spaxA': Total number of "A" spaxels 
+        'N_spaxB': Total number of "B" spaxels
+        'skyph': Sky flux in photon / 10 m / nanometer / spaxel
+        'radius_as': Extraction radius in arcsec
+        'pos': X/Y extraction location of spectrum in arcsec}
+
+    Raises:
+        None
+    '''
 
     fine = np.load(fine)
     if outname is None:
@@ -499,9 +548,6 @@ def handle_AB(A, B, fine, outname=None, nsiglo=-1, nsighi=1, corrfile=None,
     varA = interp_spectra(E_var, sixA, sign=1, outname=outname+"_A_var.pdf", corrfile=corrfile)
     varB = interp_spectra(E_var, sixB, sign=1, outname=outname+"_B_var.pdf", corrfile=corrfile)
     
-
-
-        
     ## Plot out the X/Y selected spectra
     XSA = []
     YSA = []
@@ -539,17 +585,24 @@ def handle_AB(A, B, fine, outname=None, nsiglo=-1, nsighi=1, corrfile=None,
     res[0]['nm'] = ll
     f1 = interp1d(resA[0]['nm'], resA[0]['ph_10m_nm'], bounds_error=False)
     f2 = interp1d(resB[0]['nm'], resB[0]['ph_10m_nm'], bounds_error=False)
-    res[0]['ph_10m_nm'] = np.nanmean([f1(ll)-sky_A(ll), f2(ll)-sky_B(ll)], axis=0)
+    res[0]['ph_10m_nm'] = \
+        np.nanmean([
+            f1(ll)-sky_A(ll), 
+            f2(ll)-sky_B(ll)], axis=0) * (len(sixA) + len(sixB))
 
     res[0]['skyph'] = sky
-    res[0]['var'] = np.nanmean([varA[0]['ph_10m_nm'] , varB[0]['ph_10m_nm']], 0)
+    res[0]['var'] = np.nanmean([varA[0]['ph_10m_nm'], varB[0]['ph_10m_nm']], 0) * (len(sixA) + len(sixB))
+    res[0]['radius_as'] = radius
+    res[0]['positionA'] = posA
+    res[0]['positionB'] = posA
+    res[0]['N_spaxA'] = len(sixA)
+    res[0]['N_spaxB'] = len(sixB)
 
     coef = chebfit(np.arange(len(ll)), ll, 4)
     xs = np.arange(len(ll)+1)
     newll = chebval(xs, coef)
 
     res[0]['dlam'] = np.diff(newll)
-
 
     np.save("sp_" + outname, res)
 
@@ -587,6 +640,8 @@ def handle_ABCD(A, B, C, D, fine, outname=None, nsiglo=-1, nsighi=1, corrfile=No
 
     '''
 
+
+    raise Exception("This code is not ready for prime time")
 
     if offset is None: offset = 0
     fine = np.load(fine)
@@ -709,19 +764,19 @@ if __name__ == '__main__':
     elif args.A is not None and args.B is not None:
         print "Handle AB"
         handle_AB(args.A, args.B, args.fine, outname=args.outname,
-            nsiglo=args.nsiglo, nsighi=args.nsighi, corrfile=args.correction,
+            corrfile=args.correction,
             Aoffset=args.Aoffset, Boffset=args.Boffset, 
             radius=args.radius_as)
 
     elif args.A is not None:
         if args.std is None:
             handle_A(args.A, args.fine, outname=args.outname,
-                nsighi=args.nsighi, corrfile=args.correction,
+                corrfile=args.correction,
                 Aoffset=args.Aoffset, radius=args.radius_as)
         else:
             star = Stds.Standards[args.std]
             handle_A(args.A, args.fine, outname=args.outname,
-                nsighi=args.nsighi, standard=star,
+                standard=star,
                 Aoffset=args.Aoffset, radius=args.radius_as)
             
     else:
