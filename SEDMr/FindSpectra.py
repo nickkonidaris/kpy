@@ -163,7 +163,7 @@ def find_segments(segmap=None, obj=None, plot=False, order=2):
         segrange = xrange(1, max(segdat.flatten()))
 
 
-    p = Pool()
+    p = Pool(8)
     traces = p.map(find_segments_helper, segrange)
     p.close()
 
