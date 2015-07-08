@@ -121,7 +121,7 @@ def estimateBackground(fine, infile, flex=None, outname=None):
     from astropy.convolution import convolve, convolve_fft, Box2DKernel
 
     print "Traditional convolve (pass 1)"
-    k = Box2DKernel(19)
+    k = Box2DKernel(17)
     flt = data.copy()
     NaNs = ~np.isfinite(data)
     OKs = np.isfinite(data)
