@@ -34,7 +34,9 @@ class Extraction():
            deviation. Unit is pixel.
         profile_sd (float): Profile standard deviation of extraction along ridgeline
         spec ([float]): The extracted 1d spectrum.
-        specw ([flaot]): The extracted 1d spectrum extracted using the profile trace.
+        specw ([float]): The extracted 1d spectrum extracted using the profile trace.
+        specf ([float]): The extracted 1d spectrum extracted using fraciton pixels. (SHOULD BE DEFAULT).
+        specwf ([float]): The extracted 1d spectrum extracted using fracitonal pixels with weighting 
         hg_lines ({wavelength: pixel}): An association of mercury lamp wavelength
             and pixel position. These values come from sextractor
         hgcoef ([float]): Chebyshev polynomial coefficients to the best-fit
@@ -51,6 +53,8 @@ class Extraction():
         Y_as(float): The relative position of the spaxel in arcsec
         Q_ix(int): Q coordinate of the pixel in axial units
         R_iq(int): R coordinate of the pixel in axial units
+        X_pix(float): The absolute CCD position of the spaxel in pixel. X location is the estimated position of Halpha on the detector.
+        Y_pix(float): The absolute CCD position of the spaxel in pixel. Y location is based on the segmentation map.
 
     Examples:
         You should use the values as follows:
@@ -74,6 +78,8 @@ class Extraction():
     poly = None
     spec = None
     specw = None
+    specf = None
+    specwf = None
     hg_lines = None
     hgcoef = None
     mdn_coeff = None
@@ -87,9 +93,11 @@ class Extraction():
     R_ix = None
     X_as = None
     Y_as = None
+    X_pix = None
+    Y_pix = None
 
 
-    def get_counts(self, the_spec='specw'):
+    def get_counts(self, the_spec='specf'):
         ''' Returns [wavelength, counts] spectrum.
 
         wavelength in nm
@@ -100,7 +108,9 @@ class Extraction():
         Args:
             the_spec: Either 'spec' for the top-hat extracted
                 spectrum or 'specw' for the weighted 
-                (so called optimal) extraction.
+                (so called optimal) extraction, 'specf' for the
+                fractional extraction, or 'specwf' for weighted
+                optimal extraciton.
         '''
         lam = self.get_lambda_nm()
         sp = getattr(self, the_spec)
@@ -108,7 +118,7 @@ class Extraction():
 
 
     
-    def get_flambda(self, the_spec='specw'):
+    def get_flambda(self, the_spec='specf'):
         ''' Returns [wavelength, Flambda] spectrum.
 
         wavelength in nm
@@ -119,7 +129,9 @@ class Extraction():
         Args:
             the_spec: Either 'spec' for the top-hat extracted
                 spectrum or 'specw' for the weighted 
-                (so called optimal) extraction.
+                (so called optimal) extraction, 'specf' for the
+                fractional extraction, or 'specwf' for weighted
+                optimal extraciton.
         '''
 
         dlam = self.get_dlambda()
@@ -160,9 +172,11 @@ class Extraction():
 
 
     def __init__(self, seg_id=None, ok=None, xrange=None, 
-        yrange=None, poly=None, spec=None, specw=None,
+        yrange=None, poly=None, spec=None, specw=None, specf=None,
+        specwf=None,
         exptime=exptime, trace_sigma = None, hg_lines = None,
-        X_as=None, Y_as=None, Q_ix=None, R_ix=None):
+        X_as=None, Y_as=None, Q_ix=None, R_ix=None, X_pix=None,
+        Y_pix=None):
         
 
         self.seg_id = seg_id
@@ -172,10 +186,14 @@ class Extraction():
         self.poly = poly
         self.spec = spec
         self.specw = specw
+        self.specf = specf
+        self.specwf = specwf
         self.hg_lines = hg_lines
         self.exptime = exptime
         self.trace_sigma = trace_sigma
         self.X_as = X_as
         self.Y_as = Y_as
         self.Q_ix = Q_ix
+        self.X_pix = X_pix
+        self.Y_pix = Y_pix
         self.R_ix = R_ix
