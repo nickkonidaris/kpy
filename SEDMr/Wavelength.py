@@ -187,7 +187,7 @@ def assoc_hg_with_flats(domedat_par, hgcat_par, guess_offset_par= {365.0: 231,
     for k,v in hgcat.iteritems():
         wavetrees[k] = KDTree(v)
 
-    p = Pool()
+    p = Pool(8)
     results = p.map(assoc_hg_with_flats_helper, range(len(domedat)))
     p.close()
 
@@ -335,6 +335,15 @@ def fractional_sum(FS_Y, FS_EW, FS_dat, FS_Yx1):
 
     return FSsum
 
+def make_profile(slice, sigma2=4):
+    ''' Return a gaussian profile with the same dimensions as the slice '''
+
+    profile = np.arange(np.round(slice.stop)-np.round(slice.start))
+    profile -= (len(profile)-1)/2.0
+    profile = np.exp(- profile*profile/(2*sigma2))
+    profile /= np.mean(profile)
+
+    return profile
 
 
 def wavelength_extract_helper(SS):
@@ -359,6 +368,8 @@ def wavelength_extract_helper(SS):
     resw[:] = np.nan
     resf = np.zeros(len(xpos))
     resf[:] = np.nan
+    reswf = np.zeros(len(xpos))
+    reswf[:] = np.nan
     sigma2 = ss.trace_sigma * ss.trace_sigma
     if np.isnan(sigma2): sigma2 = 4.
 
@@ -377,22 +388,20 @@ def wavelength_extract_helper(SS):
             np.max((0,np.round(Y)+flexure_y_corr_pix-extract_width)),
             np.min((np.round(Y)+flexure_y_corr_pix+extract_width+1, 2047)))
 
-        # Expanded slice for fracitonal pixels
+        # Expanded slice for fractional pixels
         Yx = slice(
             np.max((0,np.round(Y)+flexure_y_corr_pix-extract_width-1)),
             np.min((np.round(Y)+flexure_y_corr_pix+extract_width+2, 2047)))
 
-        profile = np.arange(np.round(Ys.stop)-np.round(Ys.start))
-
-        NNN = dat[Ys,X].shape[0]
-        profile = profile[0:NNN]
-        profile -= (len(profile)-1)/2.0
-        profile = np.exp(- profile*profile/(2*sigma2))
-        profile /= np.mean(profile)
 
         res[i] = np.sum(dat[Ys,X])
+
+        profile = make_profile(Ys, sigma2=sigma2)
         resw[i]= np.sum(dat[Ys,X]*profile)
         resf[i]= fractional_sum(Y, extract_width, dat[Yx,X], Yx.start)
+
+        profile = make_profile(Yx, sigma2=sigma2)
+        reswf[i]= fractional_sum(Y, extract_width, dat[Yx,X]*profile, Yx.start)
 
 
     ex = Extraction.Extraction(xrange=(minx,maxx), yrange=(yfun(xpos[0]),
@@ -400,6 +409,7 @@ def wavelength_extract_helper(SS):
                                 poly=ss.poly, spec=res,
                                 specw=resw,
                                 specf=resf,
+                                specwf=reswf,
                                 seg_id=ss.seg_id, exptime=exptime, ok=True,
                                 trace_sigma=ss.trace_sigma, Q_ix=ss.Q_ix,
                                 R_ix=ss.R_ix, X_as=ss.X_as, Y_as=ss.Y_as)
@@ -439,7 +449,7 @@ def wavelength_extract(HDUlist_par, wavecalib_par, filename='extracted_spectra.n
     SSs = [ (ix, flexure_x_corr_nm, flexure_y_corr_pix)
                 for ix in range(len(wavecalib))]
 
-    p = Pool()
+    p = Pool(8)
     extractions = p.map(wavelength_extract_helper, SSs)
     p.close()
     np.save(filename, extractions)
@@ -448,6 +458,8 @@ def wavelength_extract(HDUlist_par, wavecalib_par, filename='extracted_spectra.n
 
 
 def extract_helper(ss):
+    ''' TODO: MERGE WITH wavelength_extract_helper.
+    Functionallity is repeated.'''
     global dat
 
     if not ss['ok']: 
@@ -463,8 +475,13 @@ def extract_helper(ss):
     res[:] = np.nan
     resw = np.zeros(len(xpos))
     resw[:] = np.nan
+    resf = np.zeros(len(xpos))
+    resf[:] = np.nan
+    reswf = np.zeros(len(xpos))
+    reswf[:] = np.nan
     sigma2 = ss['trace_sigma']*ss['trace_sigma']
     if np.isnan(sigma2): sigma2 = 4.
+    extract_width = 2
 
     for i in xrange(len(xpos)):
         X = xpos[i]
@@ -474,18 +491,15 @@ def extract_helper(ss):
         if not np.isfinite(X) or not np.isfinite(Y):
             continue
         Ys = slice(np.max((0,np.int(Y)-3)),np.min((np.int(Y)+3, 2047)))
+        # Expanded slice for fractional pixels
+        Yx = slice(
+            np.max((0,np.round(Y)-extract_width-1)),
+            np.min((np.round(Y)+extract_width+2, 2047)))
 
-        profile = np.arange(Ys.stop-Ys.start)
-        profile -= (len(profile)-1)/2.0
-        profile = np.exp(- profile*profile/(2*sigma2))
-        profile /= np.mean(profile)
         res[i] = np.sum(dat[Ys,X])
-        try:
-            resw[i]= np.sum(dat[Ys,X]*profile)
-        except:
-            import pdb
-            pdb.set_trace()
-
+        # BUG: calling resw what should be resf, this is a cheap workaround
+        # for now.
+        resw[i]= fractional_sum(Y, extract_width, dat[Yx,X], Yx.start)
     hg_lines = {}
     for wave, pix in ss.iteritems():
         if type(wave) is float:
@@ -512,7 +526,7 @@ def extract(HDUlist, assoc_hg_spec, filename='raw_extractions'):
     
     extractions = []
 
-    p = Pool()
+    p = Pool(8)
     extractions = p.map(extract_helper, assoc_hg_spec)
     p.close()
 
@@ -533,6 +547,7 @@ def median_fine_grid(fine):
     ys = []
     ids = []
     for gix, g in enumerate(fine):
+        # Create X, Y, and ID vector.
         if not g.ok: 
             xs.append(-999)
             ys.append(-999)
@@ -555,7 +570,7 @@ def median_fine_grid(fine):
         loc = dat[seg_id-1]
 
         if ids[idx] is None: continue
-        dist, nearest_ixs = KD.query(loc, k=10)
+        dist, nearest_ixs = KD.query(loc, k=20)
 
         lls = []
         num_in = 0
@@ -564,7 +579,7 @@ def median_fine_grid(fine):
             if nearest is None: continue
             if fine[nearest].hgcoef is None: continue
             if fine[nearest].lamcoeff is None: continue
-            if fine[nearest].lamrms > 0.2: continue
+            if fine[nearest].lamrms > 0.4: continue
             if np.abs(fine[nearest].xrange[1] - fine[nearest].xrange[0]) < 50: continue
 
             xx = np.arange(265)
@@ -900,7 +915,7 @@ def stretch_set(Hg_set, Xe_set, mscales=None):
     squares = np.linspace(-1e-3, 1e-3, 15)
 
     specs = gridded_set
-    p = Pool()
+    p = Pool(8)
     results = p.map(stretch_fit_helper, range(len(specs)))
     p.close()
     
@@ -1032,7 +1047,7 @@ def snap_solution_into_place_all(fine, Hgs, Xes, Cds=None, Hes=None):
         PARS[-1] = (ixs, coef, lamp_spec) 
 
 
-    p = Pool()
+    p = Pool(8)
     results = p.map(snap_solution_into_place, PARS)
     p.close()
 
@@ -1168,23 +1183,23 @@ def fit_all_lines(fiducial, hg_spec, xe_spec, xxs, cd_spec=None, he_spec=None):
         Xes.append( (fiducial, s2) )
 
 
-    p = Pool()
+    p = Pool(8)
     print "Fitting Hg lines"
     hg_locs = p.map(fit_hg_lines, Hgs)
     p.close()
-    p = Pool()
+    p = Pool(8)
     print "Fitting Xe lines"
     xe_locs = p.map(fit_xe_lines, Xes)
     p.close()
     
     if cd_spec is not None:
-        p = Pool()
+        p = Pool(8)
         print "Fitting Cd lines"
         cd_locs = p.map(fit_cd_lines, Cds)
         p.close()
 
     if he_spec is not None:
-        p = Pool()
+        p = Pool(8)
         print "Fitting He lines"
         he_locs = p.map(fit_he_lines, Hes)
         p.close()
