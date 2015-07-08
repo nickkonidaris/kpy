@@ -231,7 +231,7 @@ def MF_imcombine(objname, files, dependencies=""):
 def MF_single(objname, obsnum, file, standard=None):
     '''Create the MF entry for a observation with a single file. '''
 
-    tp = {'objname': objname, 'obsfile': "flat_bs_crr_b_%s" % file}
+    tp = {'objname': objname, 'obsfile': "bs_crr_b_%s" % file}
     tp['num'] = '_obs%i' % obsnum
     tp['outname'] = "%(objname)s%(num)s.npy" % tp
 
