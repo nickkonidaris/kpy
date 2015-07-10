@@ -178,17 +178,20 @@ def extraction_to_cube(exts, outname="G.npy"):
         ext.R_ix = None
     
     for ix, ext in enumerate(exts):
+        # The X/Y location of a lenslet is based on its
+        # trace Y position and where the Halpha wavelength
+        # is expected in the X direction.
         if not ext.ok: continue
 
         Xs[ix] = -999
         Ys[ix] = -999
 
-        if ext.lamcoeff is not None: 
+        if ext.mdn_coeff is not None:
+            coeff = ext.mdn_coeff
+        elif ext.lamcoeff is not None: 
             coeff = ext.lamcoeff
-        elif ext.mdn_coeff is not None:
-            coeff =ext.mdn_coeff
         else:
-            print ext.xrange[0], ext.yrange[0]
+            print ext.seg_id, ": ", ext.xrange[0], ext.yrange[0]
             continue
 
         ixs = np.arange(*ext.xrange)
@@ -198,6 +201,9 @@ def extraction_to_cube(exts, outname="G.npy"):
 
         Xs[ix] = ixs[ix_ha]
         Ys[ix] = np.nanmean(ext.yrange)
+        ext.X_pix = Xs[ix]
+        ext.Y_pix = Ys[ix]
+
 
     Xs = np.array(Xs, dtype=np.float)
     Ys = np.array(Ys, dtype=np.float)
@@ -235,13 +241,14 @@ def extraction_to_cube(exts, outname="G.npy"):
         q_this = exts[to_populate].Q_ix
         r_this = exts[to_populate].R_ix
 
-        #pl.figure(1)
-        #pl.clf()
         for nix in Ixs:
+            # Search around the current hex via a recrusive call
+            # to populate_hex
+
             nv = np.array([Xs[nix], Ys[nix]])
             D = nv-v
-            rnd = np.round(np.dot(Tfm , D)) 
-            #print np.dot(Tfm, D)
+            dp = np.dot(Tfm, D)
+            rnd = np.round(dp)
 
             if rnd[0] == 0 and rnd[1] == 0:
                 continue
@@ -254,20 +261,13 @@ def extraction_to_cube(exts, outname="G.npy"):
                 exts[nix].R_ix = r_this + rnd[1]
                 populate_hex(nix)
             else:
-                if (exts[nix].Q_ix != q_this + rnd[0]) or (exts[nix].R_ix != r_this + rnd[1]):
+                if (exts[nix].Q_ix != q_this + rnd[0]) or \
+                    (exts[nix].R_ix != r_this + rnd[1]):
                     print "collision: "
                     print exts[nix].Q_ix, q_this + rnd[0]
                     print exts[nix].R_ix, r_this + rnd[1]
                     exts[nix].Q_ix = q_this + rnd[0]
                     exts[nix].R_ix = r_this + rnd[1]
-                    #import pdb
-                    #pdb.set_trace()
-
-            #pl.plot(D[0], D[1], 'o')
-            #pl.text(D[0], D[1], "%s %s" % (exts[nix].Q_ix, exts[nix].R_ix))
-
-        #pl.text(0, 0, "%s %s" % (q_this, r_this))
-        #pl.clf()
 
     populate_hex(Center)
 
@@ -281,10 +281,14 @@ def extraction_to_cube(exts, outname="G.npy"):
     Ys = 3/2 * Rs
 
     # Note 0.633 is plate scale measured on 22 May 2014.
+    
+    t= np.radians(195.0)
+    Rot = np.array([[np.cos(t), -np.sin(t)],
+                    [np.sin(t),  np.cos(t)]])
     for ix, ext in enumerate(exts):
-        ext.X_as = Xs[ix] * 0.633
-        ext.Y_as = Ys[ix] * 0.633
-        
+        p = np.dot(Rot , np.array([Xs[ix], Ys[ix]]))
+        ext.X_as = p[0] * 0.633
+        ext.Y_as = p[1] * 0.633
 
     np.save(outname, exts)
 
