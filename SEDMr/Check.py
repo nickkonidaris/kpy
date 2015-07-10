@@ -14,7 +14,17 @@ def checkSpec(specname):
     print "Extraction radius: %1.2f" % ss['radius_as']
     print ss.keys()
 
-    pl.title("Spectrum in %s" % specname)
+    ec = 0
+    ext = None
+    if ss.has_key('extinction_corr'):
+        ext = ss['extinction_corr']
+        ec = np.median(ext)
+    elif ss.has_key('extinction_corr_A'):
+        ext = ss['extinction_corr_A']
+        ec = np.median(ext)
+
+    et = ss['exptime']
+    pl.title("%s\n(airmass corr factor ~ %1.2f Exptime: %i)" % (specname, ec, et))
     pl.xlabel("Wavelength [nm]")
     pl.ylabel("photon/10 m/nm")
     
