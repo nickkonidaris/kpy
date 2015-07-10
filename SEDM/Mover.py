@@ -31,7 +31,7 @@ def go(fr, to):
             continue
 
         
-        if int(h) > 12: outday = d
+        if int(h) >= 12: outday = d
         else: outday = "%2.2i" % (int(d)-1)
 
         outdir = os.path.join(to, y+ mnths[int(m)-1]+outday)
