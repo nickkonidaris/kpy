@@ -106,6 +106,8 @@ def identify_observations(headers):
         name= name.replace("/", "_")
         name= name.replace(":", "_")
 
+        
+        # The 'A' position defines the start of an object set
         if '[A]' in obj or name not in objcnt:
             cnt = objcnt.get(name, 0) + 1
             vals = objs.get(name, {})
@@ -118,7 +120,6 @@ def identify_observations(headers):
                 import pdb
                 pdb.set_trace()
             objs[name][cnt].append(fname)
-
 
     print "-- Calibrations --"
     for k,v in calibs.iteritems():
@@ -231,15 +232,18 @@ def MF_imcombine(objname, files, dependencies=""):
 def MF_single(objname, obsnum, file, standard=None):
     '''Create the MF entry for a observation with a single file. '''
 
+    print objname, obsnum, file
+
     tp = {'objname': objname, 'obsfile': "bs_crr_b_%s" % file}
-    tp['num'] = '_obs%i' % obsnum
+    tp['num'] = '_obs%s' % obsnum
     tp['outname'] = "%(objname)s%(num)s.npy" % tp
 
     if standard is None: tp['STD'] = ''
     else: tp['STD'] = "--std %s" % (standard)
     tp['flexname'] = "flex_bs_crr_b_%s.npy" % (file.rstrip(".fits"))
-    first = '''# %(outname)s\n%(outname)s: cube.npy %(flexname)s %(obsfile)s.gz
-\t$(EXTSINGLE) cube.npy --A %(obsfile)s.gz --outname %(outname)s %(STD)s --nsighi 1.1 --correction std-correction.npy
+    first = '''# %(outname)s
+%(outname)s: cube.npy %(flexname)s %(obsfile)s.gz
+\t$(EXTSINGLE) cube.npy --A %(obsfile)s.gz --outname %(outname)s %(STD)s --correction std-correction.npy
 
 cube_%(outname)s.fits: %(outname)s
 \t~/spy /scr2/npk/PYTHON/SEDMr/Cube.py %(outname)s --step extract --outname cube_%(outname)s.fits
@@ -257,17 +261,19 @@ def MF_AB(objname, obsnum, A, B):
     '''Create the MF entry for an A-B observation'''
 
     #print objname, obsnum, A, B
-    tp = {'objname': objname, 'A': A, 'B': B}
+    tp = {'objname': objname, 'A': "bs_crr_b_" + A, 'B': "bs_crr_b_" + B}
     if obsnum == 1: tp['num'] = ''
     else: tp['num'] = '_obs%i' % obsnum
     tp['outname'] = "%(objname)s%(num)s.npy" % tp
     tp['flexname'] = "flex_%s.npy flex_%s.npy" % (A.rstrip('.fits'), 
         B.rstrip('.fits')) 
+
+    tp['flexname'] = ""
     tp['bgdnameA'] = "bgd_%s.npy" % (A.rstrip('.fits'))
     tp['bgdnameB'] = "bgd_%s.npy" % (B.rstrip('.fits'))  
 
-    return '''%(outname)s: fine.npy %(A)s %(B)s %(flexname)s
-\t$(EXTPAIR) fine.npy --A %(A)s --B %(B)s --outname %(outname)s --correction std-correction.npy\n''' %  tp, "%(outname)s" % tp
+    return '''# %(outname)s\n%(outname)s: cube.npy %(A)s.gz %(B)s.gz %(flexname)s
+\t$(EXTPAIR) cube.npy --A %(A)s --B %(B)s --outname %(outname)s --correction std-correction.npy\n\n''' %  tp, "%(outname)s" % tp
 
 
 def MF_ABCD(objname, obsnum, files): 
@@ -316,13 +322,15 @@ def to_makefile(objs, calibs):
         for obsnum, obsfiles in observations.iteritems():
             flatfiles.append(obsfiles)
 
+            # Handle Standard Stars
             if objname.startswith("STD-"):
                 pred = objname[4:].rstrip().lower().replace("+","").replace("-","_")
                 if pred in Stds.Standards:
                     standard = pred
 
                     for ix, obsfile in enumerate(obsfiles):
-                        m,a = MF_single(objname, obsnum, obsfile, 
+                        m,a = MF_single(objname, "%i_%i" % (obsnum, ix), 
+                            obsfile, 
                             standard=standard)
                         MF += m
                         all += a + " "
@@ -330,16 +338,25 @@ def to_makefile(objs, calibs):
                 else: standard = None
                 continue
 
-            for obsnum, obsfile in enumerate(obsfiles):
-                standard = None
-
-                m,a = MF_single(objname, obsnum, obsfile)
-
-                if standard is not None:
-                    stds += "corr_%s " % (a)
+            # Handle science targets
+            print "****", objname, obsnum, obsfiles
+            if len(obsfiles) == 2:
+                m,a = MF_AB(objname, obsnum, obsfiles[0], obsfiles[1])
 
                 MF += m
                 all += a + " "
+            else:
+                for obsfilenum, obsfile in enumerate(obsfiles):
+                    standard = None
+
+                    m,a = MF_single(objname, "%i_%i" % (obsnum,obsfilenum), 
+                        obsfile)
+
+                    if standard is not None:
+                        stds += "corr_%s " % (a)
+
+                    MF += m
+                    all += a + " "
             '''
             elif len(obsfiles) == 2:
                 m,a = MF_AB(objname, obsnum, obsfiles[0], obsfiles[1])
