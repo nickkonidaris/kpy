@@ -12,14 +12,15 @@ def checkSpec(specname):
 
     print "Plotting spectrum in %s" % specname
     print "Extraction radius: %1.2f" % ss['radius_as']
+    print ss.keys()
 
     pl.title("Spectrum in %s" % specname)
     pl.xlabel("Wavelength [nm]")
     pl.ylabel("photon/10 m/nm")
     
-    pl.step(ss['nm'], ss['ph_10m_nm'])
+    pl.step(ss['nm'], ss['ph_10m_nm'], linewidth=2)
     try: pl.step(ss['skynm'], ss['skyph'])
-    except: pl.step(ss['nm'], ss['skyph'])
+    except: pl.step(ss['nm'], ss['skyph']*(ss['N_spaxA']+ss['N_spaxB']))
 
     try: pl.step(ss['nm'], np.sqrt(np.abs(ss['var'])))
     except: pass
