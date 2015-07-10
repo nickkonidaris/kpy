@@ -2,11 +2,13 @@ import argparse
 import pdb
 from multiprocessing import Pool
 import numpy as np
+import os
 import pylab as pl
 import pyfits as pf
 import scipy
 import sys
 
+import datetime
 
 import NPK.Fit 
 import NPK.Bar as Bar
@@ -430,7 +432,9 @@ def wavelength_extract_helper(SS):
 
 
 def wavelength_extract(HDUlist_par, wavecalib_par, filename='extracted_spectra.npy',
-    flexure_x_corr_nm = 0.0, flexure_y_corr_pix = 0.0, extract_width_par=3):
+    flexure_x_corr_nm = 0.0, flexure_y_corr_pix = 0.0, extract_width_par=3,
+    inname='unknown'
+    ):
 
     global dat, exptime, wavecalib, HDUlist, extract_width
 
@@ -452,8 +456,17 @@ def wavelength_extract(HDUlist_par, wavecalib_par, filename='extracted_spectra.n
     p = Pool(8)
     extractions = p.map(wavelength_extract_helper, SSs)
     p.close()
-    np.save(filename, extractions)
-    return extractions
+
+
+    meta = {"inname": inname, "extract_width": extract_width_par,
+        "when": "%s" % datetime.datetime.now(), 
+        "user": os.getlogin(),
+        "flexure_x_corr_nm": flexure_x_corr_nm, 
+        "flexure_y_corr_pix": flexure_y_corr_pix,
+        "outname": filename}
+
+    np.save(filename, [extractions, meta])
+    return [extractions, meta]
 
 
 
@@ -1868,7 +1881,8 @@ if __name__ == '__main__':
         hdu = pf.open(args.toextract)
         outname = args.outname
 
-        ww = wavelength_extract(hdu, fitted, filename=outname)
+        ww = wavelength_extract(hdu, fitted, filename=outname, 
+            inname=args.toextract)
         
     sys.exit()
     
