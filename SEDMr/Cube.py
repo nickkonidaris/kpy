@@ -320,7 +320,7 @@ if __name__ == '__main__':
     step = args.step
     infile = args.extracted
 
-    ext = np.load(infile)
+    ext, meta = np.load(infile)
     if step == 'make':
         print "MAKING"
         cube = extraction_to_cube(ext, outname=args.outname)

@@ -15,6 +15,7 @@ import SEDMr.Wavelength as Wavelength
 import SEDMr.Spectra as SS
 import SEDMr.GUI as GUI
 import NPK.Standards as Stds
+import NPK.Atmosphere as Atm
 
 def identify_spectra_gui(spectra, outname=None, radius=2):
     
@@ -106,7 +107,7 @@ def identify_spectra(spectra, outname=None, low=-np.inf, hi=np.inf, plot=False):
 
     return ixs[ok]
 
-def to_image(spectra, meta, outname, pos=None, radius=None):
+def to_image(spectra, meta, outname, posA=None, posB=None, radius=None):
     ''' Convert spectra list into image_[outname].pdf '''
     def Strength(x):
         if x.xrange is None: return None
@@ -132,9 +133,12 @@ def to_image(spectra, meta, outname, pos=None, radius=None):
     pl.ylim(-20, 20)
     pl.xlim(-20, 20)
     pl.grid(True)
-    if pos is not None:
-        pl.axvline(pos[0], color='black', linewidth=.5)
-        pl.axhline(pos[1], color='black', linewidth=.5)
+    if posA is not None:
+        pl.axvline(posA[0], color='black', linewidth=.5)
+        pl.axhline(posA[1], color='black', linewidth=.5)
+    if posB is not None:
+        pl.axvline(posB[0], color='black', linewidth=.5)
+        pl.axhline(posB[1], color='black', linewidth=.5)
     pl.scatter(XS, YS, c=sig,s=50,marker='H',linewidth=0)
 
     pl.xlabel("X [as]")
@@ -259,7 +263,7 @@ def load_corr():
 
     
 
-def imarith(operand1, op, operand2, result):
+def imarith(operand1, op, operand2, result, doAirmass=False):
     from pyraf import iraf
     iraf.images()
 
@@ -271,8 +275,18 @@ def imarith(operand1, op, operand2, result):
 
     print "%s %s %s -> %s" % (operand1, op, operand2, result)
     iraf.imarith(operand1=operand1, op=op, operand2=operand2, result=result)
-
     iraf.imarith.setParList(pars)   
+    if doAirmass:
+        # Adjust FITS header
+        with pf.open(operand1) as f:
+            am1 = f[0].header['airmass']
+        with pf.open(operand2) as f:
+            am2 = f[0].header['airmass']
+
+        of = pf.open(result)
+        of[0].header['airmass1'] = am1
+        of[0].header['airmass2'] = am2
+        of.writeto(result, clobber=True)
 
 def gunzip(A, B):
     if A.endswith(".gz"):
@@ -302,7 +316,7 @@ def subtract(A,B, outname):
         return pf.open(outname)
 
     A,B = gunzip(A,B)
-    imarith(A, "-", B, outname)
+    imarith(A, "-", B, outname, doAirmass=True)
     A,B = gzip(A,B)
 
     return pf.open(outname)
@@ -442,12 +456,15 @@ def handle_A(A, fine, outname=None, standard=None, corrfile=None,
         flexure_x_corr_nm=flexure_x_corr_nm, 
         flexure_y_corr_pix=flexure_y_corr_pix)
 
+    np.save(outname, [E, meta])
+
+    meta['airmass'] = spec[0].header['airmass']
     six, pos = identify_spectra_gui(E, radius=radius)
     skyix = identify_bgd_spectra(E, pos)
     res = interp_spectra(E, six, outname=outname+".pdf", corrfile=corrfile)
     sky = interp_spectra(E, skyix, outname=outname+"_sky.pdf", corrfile=corrfile)
     
-    to_image(E, meta, outname, pos=pos)
+    to_image(E, meta, outname, posA=pos)
     if standard is not None:
         print "STANDARD"
         wav = standard[:,0]/10.0
@@ -459,14 +476,21 @@ def handle_A(A, fine, outname=None, standard=None, corrfile=None,
         res[0]['std-correction'] = correction
 
 
-    ff = interp1d(sky[0]['nm'], sky[0]['ph_10m_nm'], bounds_error=False)
-    skybgd = ff(sky[0]['nm'])
+    airmass = meta['airmass']
+    extCorr = 10**(Atm.ext(res[0]['nm']*10) * airmass/2.5)
+    print "Median airmass corr: ", np.median(extCorr)
 
+    ff = interp1d(sky[0]['nm'], sky[0]['ph_10m_nm'], bounds_error=False)
+    skybgd = ff(res[0]['nm'])
+
+    res[0]['exptime'] = spec[0].header['exptime']
+    res[0]['Extinction Correction'] = 'Applied using Hayes & Latham'
+    res[0]['extinction_corr'] = extCorr
     res[0]['skynm'] = sky[0]['nm']
     res[0]['skyph'] = sky[0]['ph_10m_nm']
 
-    res[0]['ph_10m_nm'] -= skybgd
-    res[0]['ph_10m_nm'] *= len(six)
+    res[0]['ph_10m_nm'] -= skybgd 
+    res[0]['ph_10m_nm'] *= extCorr * len(six)
 
     res[0]['radius_as'] = radius
     res[0]['position'] = pos
@@ -536,15 +560,19 @@ def handle_AB(A, B, fine, outname=None, corrfile=None,
     E, meta = Wavelength.wavelength_extract(diff, fine, filename=outname,
         flexure_x_corr_nm = flexure_x_corr_nm, 
         flexure_y_corr_pix = flexure_y_corr_pix)
+    np.save(outname, [E, meta])
 
+    meta['airmass1'] = diff[0].header['airmass1']
+    meta['airmass2'] = diff[0].header['airmass2']
     exfile = "extracted_var_%s.npy" % outname
     E_var, meta_var = Wavelength.wavelength_extract(var, fine, filename=outname,
         flexure_x_corr_nm = flexure_x_corr_nm, 
         flexure_y_corr_pix = flexure_y_corr_pix)
 
-    to_image(E, meta, outname, pos=posA)
     sixA, posA = identify_spectra_gui(E, radius=radius)
     sixB, posB = identify_spectra_gui(E, radius=radius)
+
+    to_image(E, meta, outname, posA=posA, posB=posB)
 
     skyA = identify_bgd_spectra(E, posA)
     skyB = identify_bgd_spectra(E, posB)
@@ -594,11 +622,23 @@ def handle_AB(A, B, fine, outname=None, corrfile=None,
     res[0]['nm'] = ll
     f1 = interp1d(resA[0]['nm'], resA[0]['ph_10m_nm'], bounds_error=False)
     f2 = interp1d(resB[0]['nm'], resB[0]['ph_10m_nm'], bounds_error=False)
+
+    airmassA = meta['airmass1']
+    airmassB = meta['airmass2']
+
+    extCorrA = 10**(Atm.ext(ll*10)*airmassA/2.5)
+    extCorrB = 10**(Atm.ext(ll*10)*airmassB/2.5)
+    print "Median airmass corr: ", np.median(extCorrA), np.median(extCorrB)
     res[0]['ph_10m_nm'] = \
         np.nansum([
-            f1(ll)-sky_A(ll), 
-            f2(ll)-sky_B(ll)], axis=0) * (len(sixA) + len(sixB))
+            (f1(ll)-sky_A(ll)) * extCorrA, 
+            (f2(ll)-sky_B(ll)) * extCorrB], axis=0) * \
+            (len(sixA) + len(sixB))
 
+    res[0]['exptime'] = diff[0].header['exptime']
+    res[0]['Extinction Correction'] = 'Applied using Hayes & Latham'
+    res[0]['extinction_corr_A'] = extCorrA
+    res[0]['extinction_corr_B'] = extCorrB
     res[0]['skyph'] = sky
     res[0]['var'] = np.nanmean([varA[0]['ph_10m_nm'], varB[0]['ph_10m_nm']], 0) * (len(sixA) + len(sixB))
     res[0]['radius_as'] = radius

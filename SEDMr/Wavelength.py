@@ -433,7 +433,7 @@ def wavelength_extract_helper(SS):
 
 def wavelength_extract(HDUlist_par, wavecalib_par, filename='extracted_spectra.npy',
     flexure_x_corr_nm = 0.0, flexure_y_corr_pix = 0.0, extract_width_par=3,
-    inname='unknown'
+    inname='unknown', airmass=None
     ):
 
     global dat, exptime, wavecalib, HDUlist, extract_width
@@ -465,7 +465,6 @@ def wavelength_extract(HDUlist_par, wavecalib_par, filename='extracted_spectra.n
         "flexure_y_corr_pix": flexure_y_corr_pix,
         "outname": filename}
 
-    np.save(filename, [extractions, meta])
     return [extractions, meta]
 
 
@@ -1883,6 +1882,8 @@ if __name__ == '__main__':
 
         ww = wavelength_extract(hdu, fitted, filename=outname, 
             inname=args.toextract)
+        ww[1]['airmass'] = hdu.header['airmass']
+        np.save(outname, ww)
         
     sys.exit()
     
