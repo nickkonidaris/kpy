@@ -9,6 +9,7 @@ import matplotlib.pyplot as pl
 from matplotlib.backend_bases import KeyEvent 
 from matplotlib.backend_bases import PickEvent
 from scipy.interpolate import interp1d
+from matplotlib.widgets import Cursor
 
 import SEDMr.Spectra as SS
 
@@ -45,11 +46,12 @@ class PositionPicker(object):
         self.draw_cube()
 
     def draw_cube(self):
-        pl.scatter(self.Xs, self.Ys, c=self.Vs, s=self.pointsize)
-        pl.ylim(-30,30)
-        pl.xlim(-30,30)
+        pl.scatter(self.Xs, self.Ys, c=self.Vs, s=self.pointsize, linewidth=0)
+        pl.ylim(-20,20)
+        pl.xlim(-20,20)
         pl.colorbar()
 
+        c = Cursor(self.figure.gca(), useblit=True)
         pl.show()
 
     def __call__(self, event):
