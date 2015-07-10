@@ -7,6 +7,7 @@ import scipy.signal as SG
 import itertools
 
 
+
 from numpy.polynomial.chebyshev import chebfit, chebval
 from scipy.interpolate import interp1d
 import SEDMr.Extraction as Extraction
@@ -17,7 +18,7 @@ import NPK.Standards as Stds
 
 def identify_spectra_gui(spectra, outname=None, radius=2):
     
-    print "Looking in a %s as circle" % radius
+    print "Looking in a %s as radius" % radius
     pl.ioff()
     KT = SS.Spectra(spectra)
     g = GUI.PositionPicker(KT, bgd_sub=True)
@@ -45,6 +46,7 @@ def identify_bgd_spectra(spectra, pos, inner=3, outer=4):
 
 def identify_spectra(spectra, outname=None, low=-np.inf, hi=np.inf, plot=False):
 
+    raise Exception("This code is outdated")
 
     ms = []
     ixs = []
@@ -104,7 +106,7 @@ def identify_spectra(spectra, outname=None, low=-np.inf, hi=np.inf, plot=False):
 
     return ixs[ok]
 
-def to_image(spectra, outname):
+def to_image(spectra, meta, outname, pos=None, radius=None):
     ''' Convert spectra list into image_[outname].pdf '''
     def Strength(x):
         if x.xrange is None: return None
@@ -127,11 +129,17 @@ def to_image(spectra, outname):
 
 
     pl.clf()
-    pl.ylim(-30,30)
-    pl.xlim(-30,30)
-    pl.scatter(XS, YS, c=sig,s=30,marker='H',linewidth=.2)
+    pl.ylim(-20, 20)
+    pl.xlim(-20, 20)
+    pl.grid(True)
+    if pos is not None:
+        pl.axvline(pos[0], color='black', linewidth=.5)
+        pl.axhline(pos[1], color='black', linewidth=.5)
+    pl.scatter(XS, YS, c=sig,s=50,marker='H',linewidth=0)
+
     pl.xlabel("X [as]")
     pl.ylabel("Y [as]")
+    pl.title(meta['outname'])
     pl.colorbar()
     pl.savefig("image_%s.pdf" % outname)
     pl.close()
@@ -258,6 +266,9 @@ def imarith(operand1, op, operand2, result):
     pars = iraf.imarith.getParList()
     iraf.imcombine.unlearn()
 
+    try: os.remove(result)
+    except: pass
+
     print "%s %s %s -> %s" % (operand1, op, operand2, result)
     iraf.imarith(operand1=operand1, op=op, operand2=operand2, result=result)
 
@@ -381,9 +392,9 @@ def handle_extract(data, outname=None, fine='fine.npy',flexure_x_corr_nm=0.0,
             flexure_x_corr_nm = flexure_x_corr_nm,
             flexure_y_corr_pix= flexure_y_corr_pix)
             
-        np.save(exfile, E)
+        np.save(exfile, [E, meta])
     else:
-        E = np.load(exfile)
+        E, meta = np.load(exfile)
 
     return E
 
@@ -427,18 +438,16 @@ def handle_A(A, fine, outname=None, standard=None, corrfile=None,
         flexure_x_corr_nm = 0
         flexure_y_corr_pix = 0
 
-    E = Wavelength.wavelength_extract(spec, fine, filename=outname,
+    E, meta = Wavelength.wavelength_extract(spec, fine, filename=outname,
         flexure_x_corr_nm=flexure_x_corr_nm, 
         flexure_y_corr_pix=flexure_y_corr_pix)
-    np.save(outname, E)
 
-
-    to_image(E, outname)
     six, pos = identify_spectra_gui(E, radius=radius)
     skyix = identify_bgd_spectra(E, pos)
     res = interp_spectra(E, six, outname=outname+".pdf", corrfile=corrfile)
     sky = interp_spectra(E, skyix, outname=outname+"_sky.pdf", corrfile=corrfile)
     
+    to_image(E, meta, outname, pos=pos)
     if standard is not None:
         print "STANDARD"
         wav = standard[:,0]/10.0
@@ -462,6 +471,9 @@ def handle_A(A, fine, outname=None, standard=None, corrfile=None,
     res[0]['radius_as'] = radius
     res[0]['position'] = pos
     res[0]['N_spax'] = len(six)
+    res[0]['meta'] = meta
+    res[0]['object_spaxel_ids'] = six
+    res[0]['sky_spaxel_ids'] = skyix
 
     np.save("spectrum_" + outname, res)
 
@@ -521,19 +533,16 @@ def handle_AB(A, B, fine, outname=None, corrfile=None,
         flexure_y_corr_pix = 0
 
 
-    exfile = "extracted_%s.npy" % outname
-    E = Wavelength.wavelength_extract(diff, fine, filename=outname,
+    E, meta = Wavelength.wavelength_extract(diff, fine, filename=outname,
         flexure_x_corr_nm = flexure_x_corr_nm, 
         flexure_y_corr_pix = flexure_y_corr_pix)
-    np.save(exfile, E)
 
     exfile = "extracted_var_%s.npy" % outname
-    E_var = Wavelength.wavelength_extract(var, fine, filename=outname,
+    E_var, meta_var = Wavelength.wavelength_extract(var, fine, filename=outname,
         flexure_x_corr_nm = flexure_x_corr_nm, 
         flexure_y_corr_pix = flexure_y_corr_pix)
-    np.save(exfile, E)
 
-    to_image(E, outname)
+    to_image(E, meta, outname, pos=posA)
     sixA, posA = identify_spectra_gui(E, radius=radius)
     sixB, posB = identify_spectra_gui(E, radius=radius)
 
@@ -586,7 +595,7 @@ def handle_AB(A, B, fine, outname=None, corrfile=None,
     f1 = interp1d(resA[0]['nm'], resA[0]['ph_10m_nm'], bounds_error=False)
     f2 = interp1d(resB[0]['nm'], resB[0]['ph_10m_nm'], bounds_error=False)
     res[0]['ph_10m_nm'] = \
-        np.nanmean([
+        np.nansum([
             f1(ll)-sky_A(ll), 
             f2(ll)-sky_B(ll)], axis=0) * (len(sixA) + len(sixB))
 
@@ -597,6 +606,11 @@ def handle_AB(A, B, fine, outname=None, corrfile=None,
     res[0]['positionB'] = posA
     res[0]['N_spaxA'] = len(sixA)
     res[0]['N_spaxB'] = len(sixB)
+    res[0]['meta'] = meta
+    res[0]['object_spaxel_ids_A'] = sixA
+    res[0]['sky_spaxel_ids_A'] = skyA 
+    res[0]['object_spaxel_ids_B'] = sixB
+    res[0]['sky_spaxel_ids_B'] = skyB
 
     coef = chebfit(np.arange(len(ll)), ll, 4)
     xs = np.arange(len(ll)+1)
