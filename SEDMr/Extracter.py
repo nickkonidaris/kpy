@@ -22,7 +22,7 @@ def identify_spectra_gui(spectra, outname=None, radius=2):
     print "Looking in a %s as radius" % radius
     pl.ioff()
     KT = SS.Spectra(spectra)
-    g = GUI.PositionPicker(KT, bgd_sub=True)
+    g = GUI.PositionPicker(KT, bgd_sub=True, radius_as=radius)
     pos  = g.picked
 
     kix = KT.KT.query_ball_point(pos, radius)
@@ -452,11 +452,17 @@ def handle_A(A, fine, outname=None, standard=None, corrfile=None,
         flexure_x_corr_nm = 0
         flexure_y_corr_pix = 0
 
-    E, meta = Wavelength.wavelength_extract(spec, fine, filename=outname,
-        flexure_x_corr_nm=flexure_x_corr_nm, 
-        flexure_y_corr_pix=flexure_y_corr_pix)
+    if os.path.isfile(outname+".npy"):
+        print "USING extractions in %s!" % outname
+        print "rm %s.npy # if you want to recreate extractions" % outname
+        E, meta = np.load(outname+".npy")
+    else:
+        print "CREATING extractions ..."
+        E, meta = Wavelength.wavelength_extract(spec, fine, filename=outname,
+            flexure_x_corr_nm=flexure_x_corr_nm, 
+            flexure_y_corr_pix=flexure_y_corr_pix)
 
-    np.save(outname, [E, meta])
+        np.save(outname, [E, meta])
 
     meta['airmass'] = spec[0].header['airmass']
     six, pos = identify_spectra_gui(E, radius=radius)
@@ -537,17 +543,6 @@ def handle_AB(A, B, fine, outname=None, corrfile=None,
     if outname is None:
         outname = "%sm%s" % (A,B)
 
-    if not outname.endswith(".fits"): outname = outname + ".fits"
-    diff = subtract(A,B, outname)
-    add(A,B, "tmpvar_" + outname)
-
-    adcspeed = diff[0].header["ADCSPEED"]
-    if adcspeed == 2: read_var = 22*22
-    else: read_var = 5*5
-
-    var = add("tmpvar_" + outname, str(read_var), "var_" + outname)
-    os.remove("tmpvar_" + outname + ".gz")
-
     if Aoffset is not None:
         ff = np.load(Aoffset)
         flexure_x_corr_nm = ff[0]['dXnm']
@@ -556,18 +551,40 @@ def handle_AB(A, B, fine, outname=None, corrfile=None,
         flexure_x_corr_nm = 0
         flexure_y_corr_pix = 0
 
+    if os.path.isfile(outname + ".fits.npy"):
+        print "USING extractions in %s!" % outname
+        E, meta = np.load(outname + ".fits.npy")
+        E_var, meta_var = np.load("var_" + outname + ".fits.npy")
+    else:
+        if not outname.endswith(".fits"): 
+            outname = outname + ".fits"
+            diff = subtract(A,B, outname)
+            add(A,B, "tmpvar_" + outname)
 
-    E, meta = Wavelength.wavelength_extract(diff, fine, filename=outname,
-        flexure_x_corr_nm = flexure_x_corr_nm, 
-        flexure_y_corr_pix = flexure_y_corr_pix)
-    np.save(outname, [E, meta])
+            adcspeed = diff[0].header["ADCSPEED"]
+            if adcspeed == 2: read_var = 22*22
+            else: read_var = 5*5
 
-    meta['airmass1'] = diff[0].header['airmass1']
-    meta['airmass2'] = diff[0].header['airmass2']
-    exfile = "extracted_var_%s.npy" % outname
-    E_var, meta_var = Wavelength.wavelength_extract(var, fine, filename=outname,
-        flexure_x_corr_nm = flexure_x_corr_nm, 
-        flexure_y_corr_pix = flexure_y_corr_pix)
+        var = add("tmpvar_" + outname, str(read_var), "var_" + outname)
+        os.remove("tmpvar_" + outname + ".gz")
+
+
+        E, meta = Wavelength.wavelength_extract(diff, fine, 
+            filename=outname,
+            flexure_x_corr_nm = flexure_x_corr_nm, 
+            flexure_y_corr_pix = flexure_y_corr_pix)
+        meta['airmass1'] = diff[0].header['airmass1']
+        meta['airmass2'] = diff[0].header['airmass2']
+        meta['exptime'] = diff[0].header['exptime']
+        np.save(outname, [E, meta])
+
+        exfile = "extracted_var_%s.npy" % outname
+        E_var, meta_var = Wavelength.wavelength_extract(var, fine, 
+            filename=outname,
+            flexure_x_corr_nm = flexure_x_corr_nm, 
+            flexure_y_corr_pix = flexure_y_corr_pix)
+
+        np.save("var_" + outname, [E_var, meta_var])
 
     sixA, posA = identify_spectra_gui(E, radius=radius)
     sixB, posB = identify_spectra_gui(E, radius=radius)
@@ -635,7 +652,7 @@ def handle_AB(A, B, fine, outname=None, corrfile=None,
             (f2(ll)-sky_B(ll)) * extCorrB], axis=0) * \
             (len(sixA) + len(sixB))
 
-    res[0]['exptime'] = diff[0].header['exptime']
+    res[0]['exptime'] = meta['exptime']
     res[0]['Extinction Correction'] = 'Applied using Hayes & Latham'
     res[0]['extinction_corr_A'] = extCorrA
     res[0]['extinction_corr_B'] = extCorrB
