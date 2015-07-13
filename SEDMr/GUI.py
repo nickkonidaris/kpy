@@ -14,6 +14,28 @@ from matplotlib.widgets import Cursor
 import SEDMr.Spectra as SS
 
 
+class MouseCross(object):
+    ''' Draw a cursor with the mouse cursor '''
+
+    def __init__(self, ax, radius_as=3, **kwargs):
+        self.ax = ax
+
+        radius_pix = np.abs((ax.transData.transform((radius_as, 0)) -
+            ax.transData.transform((0,0)))[0])
+        print "%s arcsec is %s pix" % (radius_as, radius_pix)
+        self.line, = self.ax.plot([0], [0], visible=False, 
+            marker=r'$\bigodot$', markersize=radius_pix*2, color='red', **kwargs)
+
+    def show_cross(self, event):
+        if event.inaxes == self.ax:
+            self.line.set_data([event.xdata], [event.ydata])
+            self.line.set_visible(True)
+        else:
+            self.line.set_visible(False)
+
+
+        pl.draw()
+
 class PositionPicker(object):
 
     spectra = None
@@ -22,8 +44,9 @@ class PositionPicker(object):
     Vs = None
     pointsize = None
     picked = None
+    radius_as = None
 
-    def __init__(self, spectra=None, figure=None, pointsize=50, bgd_sub=False):
+    def __init__(self, spectra=None, figure=None, pointsize=55, bgd_sub=False, radius_as=3):
         ''' Create spectum picking gui.
 
         Args:
@@ -42,6 +65,8 @@ class PositionPicker(object):
         pl.ioff()
         self.figure = pl.figure(figure)
 
+        self.radius_as = radius_as
+
         self.figure.canvas.mpl_connect("button_press_event", self)
         self.draw_cube()
 
@@ -52,6 +77,10 @@ class PositionPicker(object):
         pl.colorbar()
 
         c = Cursor(self.figure.gca(), useblit=True)
+
+        cross = MouseCross(self.figure.gca(), radius_as=self.radius_as)
+        self.figure.canvas.mpl_connect('motion_notify_event', 
+            cross.show_cross)
         pl.show()
 
     def __call__(self, event):
