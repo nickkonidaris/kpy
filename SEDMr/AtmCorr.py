@@ -3,9 +3,89 @@ import argparse, os, sys
 import numpy as np
 import pylab as pl
 import pyfits as pf
+import datetime
+import os
 
 from numpy.polynomial.chebyshev import chebfit, chebval
 from scipy.interpolate import interp1d
+
+import Wavelength
+import NPK.Standards as SS
+
+def handle_create(outname=None, filelist=[]):
+    ''' Create standard star correction. Units are erg/s/cm2/Ang '''
+
+    if outname is None: outname='atm-corr.npy'
+
+    ll = Wavelength.fiducial_spectrum()
+    spectra = []
+    corrs = []
+    corr_vals =[]
+    for file in filelist: 
+        ''' Filename is STD-nnnnn_obs* '''
+
+        try: data = np.load(file)[0]
+        except:
+            raise Exception("Not passed a spectrum file, the file should start with spectrum_")
+        
+        # Convert file named spectrum_STD-nnnn_obs* to a name compaitable
+        # with Standards.py
+        pred = file[13:].rstrip()
+        pred = pred.split("_")[0]
+        pred = pred.lower().replace("+","").replace("-","_")
+        print pred, pred in SS.Standards
+
+        if pred not in SS.Standards:
+            raise exception("File named '%s' is reduced to '%s' and no such standard seems to exist."  % (file, pred))
+
+
+        ff = interp1d(data['nm'], data['ph_10m_nm'], bounds_error=False)
+        spectra.append(ff(ll))
+
+
+        # Now process the standard
+        standard = SS.Standards[pred]
+        wav = standard[:,0]/10.0
+        flux = standard[:,1]
+        std_ff = interp1d(wav, flux, bounds_error=False, fill_value=np.nan)
+        correction = std_ff(ll)/ff(ll)
+
+        ROI = (ll > 600) & (ll < 850)
+        corr_vals.append(np.median(correction[ROI]))
+        correction /= corr_vals[-1]
+
+        corrs.append(correction)
+
+    corrs = np.array(corrs) 
+    erg_s_cm2_ang = corrs * np.mean(corr_vals) * 1e-16
+
+    pl.figure(1)
+    pl.clf()
+    pl.grid(True)
+    pl.ylim(1e-19,1e-16)
+    pl.semilogy(ll, np.nanmean(erg_s_cm2_ang, 0), linewidth=4)
+    for ix,e in enumerate(erg_s_cm2_ang):
+        pl.semilogy(ll, e*corr_vals[ix]/np.mean(corr_vals))
+
+    pl.xlabel("Wavelength [nm]")
+    pl.ylabel("Correction [erg/s/cm cm/Ang]")
+    pl.title("Correct ph/10 m/nm to erg/s/cm2/Ang")
+    pl.savefig("Standard_Correction.pdf")
+    print np.mean(corr_vals) * 1e-16, np.std(corr_vals)*1e-16
+
+    res = {"nm": ll,
+        "correction": np.nanmean(erg_s_cm2_ang, 0),
+        "doc": "Correct ph/10 m/nm to erg/2/cm2/ang",
+        "Nspec": len(corrs),
+        "correction_std": np.nanstd(erg_s_cm2_ang,0),
+        "outname": outname,
+        "files": filelist,
+        "when": '%s' % datetime.datetime.now(),
+        "user": os.getlogin()
+        }
+
+    np.save(outname, [res])
+    return res
 
 def handle_summary(outname=None, filelist=[]):
     if outname is None: outname = 'correction.npy'
@@ -59,23 +139,24 @@ def handle_corr(filename, outname='std-correction.npy', objname=None) :
 
 
 
-parser = argparse.ArgumentParser(description=\
-    '''
-
-        
-    ''', formatter_class=argparse.RawTextHelpFormatter)
-
-parser.add_argument('process', type=str, help='Process [CORR|SUM]')
-parser.add_argument('--A', type=str, help='FITS A file')
-parser.add_argument('--outname', type=str, help='Prefix output name')
-parser.add_argument('--std', type=str, help='Name of standard')
-parser.add_argument('--files', type=str, metavar='file', nargs='+',
-    help='Name of standard')
-
-
-args = parser.parse_args()
-
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=\
+        '''
+
+            
+        ''', formatter_class=argparse.RawTextHelpFormatter)
+
+    parser.add_argument('process', type=str, help='Process [CORR|SUM|CREATE]')
+    parser.add_argument('--A', type=str, help='FITS A file')
+    parser.add_argument('--outname', type=str, help='Prefix output name')
+    parser.add_argument('--std', type=str, help='Name of standard')
+    parser.add_argument('--files', type=str, metavar='file', nargs='+',
+        help='Name of standard')
+
+
+    args = parser.parse_args()
+
+
     
     if args.process == 'CORR':
         # Take atmospheric correction out and store in a separate file
@@ -83,6 +164,10 @@ if __name__ == '__main__':
 
     if args.process == 'SUM':
         handle_summary(outname=args.outname, filelist=args.files)
+
+    if args.process == 'CREATE':
+        # Create the atmospheric correction.
+        handle_create(outname=args.outname, filelist=args.files)
  
 
 
