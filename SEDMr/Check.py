@@ -3,7 +3,10 @@ import argparse
 import numpy as np
 import pylab as pl
 import pyfits as pf
+from scipy.interpolate import interp1d
 import sys
+
+OUTDIR = '/scr2/npk/sedm/reduced/2015A'
 
  
 def checkSpec(specname):
@@ -13,6 +16,10 @@ def checkSpec(specname):
     print "Plotting spectrum in %s" % specname
     print "Extraction radius: %1.2f" % ss['radius_as']
     print ss.keys()
+
+    corr = np.load('atm-corr.npy')[0]
+    corf = interp1d(corr['nm'],corr['correction'], bounds_error=False,
+        fill_value=1.0)
 
     ec = 0
     ext = None
@@ -26,13 +33,14 @@ def checkSpec(specname):
     et = ss['exptime']
     pl.title("%s\n(airmass corr factor ~ %1.2f Exptime: %i)" % (specname, ec, et))
     pl.xlabel("Wavelength [nm]")
-    pl.ylabel("photon/10 m/nm")
+    pl.ylabel("erg/s/cm2/ang")
     
-    pl.step(ss['nm'], ss['ph_10m_nm'], linewidth=2)
-    try: pl.step(ss['skynm'], ss['skyph'])
-    except: pl.step(ss['nm'], ss['skyph']*(ss['N_spaxA']+ss['N_spaxB']))
+    pl.step(ss['nm'], ss['ph_10m_nm']*corf(ss['nm']), linewidth=2)
+    try: pl.step(ss['skynm'], ss['skyph']*corf(ss['skynm']))
+    except: pl.step(ss['nm'], ss['skyph']*(ss['N_spaxA']+ss['N_spaxB'])*
+        corf(ss['nm']))
 
-    try: pl.step(ss['nm'], np.sqrt(np.abs(ss['var'])))
+    try: pl.step(ss['nm'], np.sqrt(np.abs(ss['var']))*corf(ss['nm']))
     except: pass
 
     pl.legend(['obj', 'sky', 'err'])
@@ -70,15 +78,7 @@ if __name__ == '__main__':
         ''', formatter_class=argparse.RawTextHelpFormatter)
 
 
-    parser.add_argument('--cube', type=str, help='Fine correction path')
-    parser.add_argument('--spec', type=str, help='Extracted spectrum file')
+    parser.add_argument('name', type=str, help='Name of object to archive')
 
-
-    args = parser.parse_args()
-
-    if args.cube is not None:
-        checkCube(args.cube)
-    if args.spec is not None:
-        checkSpec(args.spec)
 
 
