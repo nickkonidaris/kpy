@@ -5,6 +5,7 @@ import pylab as pl
 import pyfits as pf
 import datetime
 import os
+import sets
 
 from numpy.polynomial.chebyshev import chebfit, chebval
 from scipy.interpolate import interp1d
@@ -57,13 +58,41 @@ def handle_create(outname=None, filelist=[]):
         corrs.append(correction)
 
     corrs = np.array(corrs) 
-    erg_s_cm2_ang = corrs * np.mean(corr_vals) * 1e-16
+    erg_s_cm2_ang = corrs * np.median(corr_vals) * 1e-16
 
+
+    
+    roi = (ll > 900) & (ll < 1000)
+    the_corr = np.median(erg_s_cm2_ang,0)
+    if not np.isfinite(the_corr).all():
+        # Fit polynomial to extrapolate correction
+        redend = (ll > 800) & (ll < 915)
+        ss = np.poly1d(np.polyfit(ll[redend], the_corr[redend], 2))
+
+        redend = (ll>910)
+        the_corr[redend] = ss(ll[redend])
+
+
+    # Now clean over the Balmer series
+    balmers = [656.3, 486.1, 434.0, 410.2, 397.0]
+    for balmer in balmers:
+        eps = balmer * 0.02
+        line_ROI = sets.Set(np.where(np.abs((ll-balmer)/balmer) < 0.03)[0])
+        broad_ROI = sets.Set(np.where(np.abs((ll-balmer)/balmer) < 0.06)[0])
+        around_line_ROI = list(broad_ROI - line_ROI)
+        fit = np.poly1d(np.polyfit(ll[around_line_ROI], 
+            the_corr[around_line_ROI], 1))
+        to_fix = list(line_ROI)
+        the_corr[to_fix] = fit(ll[to_fix])
+
+
+
+    # Plot data
     pl.figure(1)
     pl.clf()
     pl.grid(True)
-    pl.ylim(1e-19,1e-16)
-    pl.semilogy(ll, np.nanmean(erg_s_cm2_ang, 0), linewidth=4)
+    pl.ylim(1e-20,1e-16)
+    pl.semilogy(ll, the_corr, linewidth=4)
     for ix,e in enumerate(erg_s_cm2_ang):
         pl.semilogy(ll, e*corr_vals[ix]/np.mean(corr_vals))
 
@@ -73,8 +102,9 @@ def handle_create(outname=None, filelist=[]):
     pl.savefig("Standard_Correction.pdf")
     print np.mean(corr_vals) * 1e-16, np.std(corr_vals)*1e-16
 
+    # Construct result
     res = {"nm": ll,
-        "correction": np.nanmean(erg_s_cm2_ang, 0),
+        "correction": the_corr,
         "doc": "Correct ph/10 m/nm to erg/2/cm2/ang",
         "Nspec": len(corrs),
         "correction_std": np.nanstd(erg_s_cm2_ang,0),
