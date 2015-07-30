@@ -18,6 +18,9 @@ import NPK.Standards as Stds
 import NPK.Atmosphere as Atm
 
 def identify_spectra_gui(spectra, outname=None, radius=2):
+    ''' Returns index of spectra picked in GUI.
+
+    NOTE: Index is counted against the array, not seg_id'''
     
     print "Looking in a %s as radius" % radius
     pl.ioff()
@@ -31,7 +34,7 @@ def identify_spectra_gui(spectra, outname=None, radius=2):
 
     return KT.good_positions[kix], pos
 
-def identify_bgd_spectra(spectra, pos, inner=3, outer=4):
+def identify_bgd_spectra(spectra, pos, inner=3, outer=6):
     KT = SS.Spectra(spectra)
 
     objs = KT.good_positions[KT.KT.query_ball_point(pos, r=inner)]
@@ -156,7 +159,7 @@ def c_to_nm(coefficients, pix, offset=0):
     return chebval(pix, t)
 
 def interp_spectra(all_spectra, six, sign=1., outname=None, plot=False,
-    corrfile=None, dnm=0):
+    corrfile=None, dnm=0, onto=None):
     '''Interp spectra onto common grid
 
     Args:
@@ -164,11 +167,12 @@ def interp_spectra(all_spectra, six, sign=1., outname=None, plot=False,
         six:
         dnm: Offset (usually for flexure) in nm'''
     
-    l_grid = None
-    s_grid = None
-    spectra = []
-    for ix,spectrum in enumerate(all_spectra):
-        if ix not in six: continue
+    l_grid = onto
+    s_grid = []
+    lamcoeff = None
+    #for ix,spectrum in enumerate(all_spectra):
+    for ix in six:
+        spectrum = all_spectra[ix]
 
         l,s = spectrum.get_counts(the_spec='specw')
         pix = np.arange(*spectrum.xrange)
@@ -182,13 +186,12 @@ def interp_spectra(all_spectra, six, sign=1., outname=None, plot=False,
 
         if l_grid is None:
             l_grid = l
-            s_grid = [s*pon]
+            s_grid.append(s*pon)
             lamcoeff = spectrum.lamcoeff
         else:
             fun = interp1d(l,s*pon, bounds_error=False,fill_value=0)
             s_grid.append(fun(l_grid))
 
-        spectra.append(s)
             
             
     medspec = np.mean(s_grid, 0)
@@ -227,7 +230,7 @@ def interp_spectra(all_spectra, six, sign=1., outname=None, plot=False,
             available
         doc: This doc string
         '''
-    result = [{"nm": l_grid, "ph_10m_nm": medspec, "spectra": spectra,
+    result = [{"nm": l_grid, "ph_10m_nm": medspec, "spectra": s_grid,
         "coefficients": lamcoeff, 
         "doc": doc}]
 
@@ -404,7 +407,8 @@ def handle_extract(data, outname=None, fine='fine.npy',flexure_x_corr_nm=0.0,
     if not os.path.exists(outname + ".npy"):
         E = Wavelength.wavelength_extract(data, fine, filename=outname,
             flexure_x_corr_nm = flexure_x_corr_nm,
-            flexure_y_corr_pix= flexure_y_corr_pix)
+            flexure_y_corr_pix= flexure_y_corr_pix,
+            flat_corrections=flat_corrections)
             
         np.save(exfile, [E, meta])
     else:
@@ -413,7 +417,7 @@ def handle_extract(data, outname=None, fine='fine.npy',flexure_x_corr_nm=0.0,
     return E
 
 def handle_A(A, fine, outname=None, standard=None, corrfile=None,
-    Aoffset=None, radius=2):
+    Aoffset=None, radius=2, flat_corrections=None):
     '''Loads 2k x 2k IFU frame "A" and extracts spectra from the locations
     in "fine". 
 
@@ -424,6 +428,8 @@ def handle_A(A, fine, outname=None, standard=None, corrfile=None,
         outname (string): filename to write results to
         Aoffset (2tuple): X (nm)/Y (pix) shift to apply for flexure correction
         radius (float): Extraction radius in arcsecond
+        flat_corrections (list): A list of FlatCorrection objects for
+            correcting the extraction
 
     Returns:
         The extracted spectrum, a dictionary:
@@ -460,15 +466,16 @@ def handle_A(A, fine, outname=None, standard=None, corrfile=None,
         print "CREATING extractions ..."
         E, meta = Wavelength.wavelength_extract(spec, fine, filename=outname,
             flexure_x_corr_nm=flexure_x_corr_nm, 
-            flexure_y_corr_pix=flexure_y_corr_pix)
+            flexure_y_corr_pix=flexure_y_corr_pix,
+            flat_corrections = flat_corrections)
 
         np.save(outname, [E, meta])
 
     meta['airmass'] = spec[0].header['airmass']
     six, pos = identify_spectra_gui(E, radius=radius)
-    skyix = identify_bgd_spectra(E, pos)
+    skyix = identify_bgd_spectra(E, pos, inner=radius*1.1)
     res = interp_spectra(E, six, outname=outname+".pdf", corrfile=corrfile)
-    sky = interp_spectra(E, skyix, outname=outname+"_sky.pdf", corrfile=corrfile)
+    sky = interp_spectra(E, skyix, onto=res[0]['nm'], outname=outname+"_sky.pdf", corrfile=corrfile)
     
     to_image(E, meta, outname, posA=pos)
     if standard is not None:
@@ -504,13 +511,14 @@ def handle_A(A, fine, outname=None, standard=None, corrfile=None,
     res[0]['meta'] = meta
     res[0]['object_spaxel_ids'] = six
     res[0]['sky_spaxel_ids'] = skyix
+    res[0]['sky_spectra'] = sky[0]['spectra']
 
-    np.save("spectrum_" + outname, res)
+    np.save("sp_" + outname, res)
 
 
 
 def handle_AB(A, B, fine, outname=None, corrfile=None,
-    Aoffset=None, Boffset=None, radius=2):
+    Aoffset=None, Boffset=None, radius=2, flat_corrections=None):
     '''Loads 2k x 2k IFU frame "A" and "B" and extracts A-B and A+B spectra
     from the "fine" location. 
 
@@ -523,6 +531,8 @@ def handle_AB(A, B, fine, outname=None, corrfile=None,
         Aoffset (2tuple): X (nm)/Y (pix) shift to apply for flexure correction
         Boffset (2tuple): X (nm)/Y (pix) shift to apply for flexure correction
         radius (float): Extraction radius in arcsecond
+        flat_corrections (list): A list of FlatCorrection objects for
+            correcting the extraction
 
     Returns:
         The extracted spectrum, a dictionary:
@@ -572,7 +582,8 @@ def handle_AB(A, B, fine, outname=None, corrfile=None,
         E, meta = Wavelength.wavelength_extract(diff, fine, 
             filename=outname,
             flexure_x_corr_nm = flexure_x_corr_nm, 
-            flexure_y_corr_pix = flexure_y_corr_pix)
+            flexure_y_corr_pix = flexure_y_corr_pix,
+            flat_corrections=flat_corrections)
         meta['airmass1'] = diff[0].header['airmass1']
         meta['airmass2'] = diff[0].header['airmass2']
         meta['exptime'] = diff[0].header['exptime']
@@ -582,7 +593,8 @@ def handle_AB(A, B, fine, outname=None, corrfile=None,
         E_var, meta_var = Wavelength.wavelength_extract(var, fine, 
             filename=outname,
             flexure_x_corr_nm = flexure_x_corr_nm, 
-            flexure_y_corr_pix = flexure_y_corr_pix)
+            flexure_y_corr_pix = flexure_y_corr_pix,
+            flat_corrections=flat_corrections)
 
         np.save("var_" + outname, [E_var, meta_var])
 
@@ -635,8 +647,10 @@ def handle_AB(A, B, fine, outname=None, corrfile=None,
 
     sky = np.nanmean([sky_A(ll), sky_B(ll)], axis=0)
 
-    res = copy.copy(resA)
-    res[0]['nm'] = ll
+    res = np.copy(resA)
+    res = [{"doc": resA[0]["doc"], "ph_10m_nm": np.copy(resA[0]["ph_10m_nm"]),
+        "nm": np.copy(resA[0]["ph_10m_nm"])}]
+    res[0]['nm'] = np.copy(ll)
     f1 = interp1d(resA[0]['nm'], resA[0]['ph_10m_nm'], bounds_error=False)
     f2 = interp1d(resB[0]['nm'], resB[0]['ph_10m_nm'], bounds_error=False)
 
@@ -816,39 +830,45 @@ if __name__ == '__main__':
     parser.add_argument('--Coffset', type=str, help='Name of "C" file that holds flexure offset correction information')
     parser.add_argument('--Doffset', type=str, help='Name of "D" file that holds flexure offset correction information')
     parser.add_argument('--radius_as', type=float, help='Extraction radius in arcsecond', default=3)
+    parser.add_argument('--flat_correction', type=str, help='Name of flat field .npy file', default=None)
 
     args = parser.parse_args()
 
 
-
-
     if args.outname is not None:
         args.outname = args.outname.rstrip('.npy')
+
+    if args.flat_correction is not None:
+        print "Using flat data in %s" % args.flat_correction
+        flat = np.load(args.flat_correction)
+    else: flat = None
 
     if args.A is not None and args.B is not None and args.C is not None \
         and args.D is not None:
         handle_ABCD(args.A, args.B, args.C, args.D, args.fine, 
                 outname=args.outname,
             nsiglo=args.nsiglo, nsighi=args.nsighi, corrfile=args.correction,
-            offset=args.Aoffset)
+            offset=args.Aoffset, flat_corrections=flat)
 
     elif args.A is not None and args.B is not None:
         print "Handle AB"
         handle_AB(args.A, args.B, args.fine, outname=args.outname,
             corrfile=args.correction,
             Aoffset=args.Aoffset, Boffset=args.Boffset, 
-            radius=args.radius_as)
+            radius=args.radius_as, flat_corrections=flat)
 
     elif args.A is not None:
         if args.std is None:
             handle_A(args.A, args.fine, outname=args.outname,
                 corrfile=args.correction,
-                Aoffset=args.Aoffset, radius=args.radius_as)
+                Aoffset=args.Aoffset, radius=args.radius_as,
+                flat_corrections=flat)
         else:
             star = Stds.Standards[args.std]
             handle_A(args.A, args.fine, outname=args.outname,
                 standard=star,
-                Aoffset=args.Aoffset, radius=args.radius_as)
+                Aoffset=args.Aoffset, radius=args.radius_as,
+                flat_corrections=flat)
             
     else:
         print "I do not understand your intent, you must specify --A, at least"
