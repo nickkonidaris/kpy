@@ -282,12 +282,12 @@ def extraction_to_cube(exts, outname="G.npy"):
 
     # Note 0.633 is plate scale measured on 22 May 2014.
     
-    t= np.radians(195.0)
+    t= np.radians(165.0+45)
     Rot = np.array([[np.cos(t), -np.sin(t)],
                     [np.sin(t),  np.cos(t)]])
     for ix, ext in enumerate(exts):
         p = np.dot(Rot , np.array([Xs[ix], Ys[ix]]))
-        ext.X_as = p[0] * 0.633
+        ext.X_as = p[0] * -0.633
         ext.Y_as = p[1] * 0.633
 
     np.save(outname, exts)
@@ -320,12 +320,13 @@ if __name__ == '__main__':
     step = args.step
     infile = args.extracted
 
-    ext, meta = np.load(infile)
     if step == 'make':
         print "MAKING"
+        ext = np.load(infile)
         cube = extraction_to_cube(ext, outname=args.outname)
     elif step == 'extract':
         print "EXTRACTING"
+        ext,meta = np.load(infile)
         QR_to_img(ext, Size=2, outname=args.outname)
     else:
         print "NO STEP TO PERFORM"
