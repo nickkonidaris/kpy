@@ -349,7 +349,7 @@ def make_profile(slice, sigma2=4):
 
 
 def wavelength_extract_helper(SS):
-    global dat, exptime, wavecalib, HDUlist, extract_width
+    global dat, exptime, wavecalib, HDUlist, extract_width, flt_corrs
 
     ix, flexure_x_corr_nm, flexure_y_corr_pix = SS
 
@@ -405,17 +405,23 @@ def wavelength_extract_helper(SS):
         profile = make_profile(Yx, sigma2=sigma2)
         reswf[i]= fractional_sum(Y, extract_width, dat[Yx,X]*profile, Yx.start)
 
-
+    try:
+        ll = chebval(np.arange(minx,maxx),ss.lamcoeff)
+        fc = flt_corrs[ix].get_correction(ll)
+    except: 
+        fc = 1.0
     ex = Extraction.Extraction(xrange=(minx,maxx), yrange=(yfun(xpos[0]),
                                 yfun(xpos[-1])),
                                 poly=ss.poly, spec=res,
-                                specw=resw,
-                                specf=resf,
-                                specwf=reswf,
+                                specw=resw/fc,
+                                specf=resf/fc,
+                                specwf=reswf/fc,
                                 seg_id=ss.seg_id, exptime=exptime, ok=True,
                                 trace_sigma=ss.trace_sigma, Q_ix=ss.Q_ix,
                                 R_ix=ss.R_ix, X_as=ss.X_as, Y_as=ss.Y_as)
 
+
+    
     if ss.__dict__.has_key('lamcoeff') and ss.lamcoeff is not None:
         ex.lamcoeff = ss.lamcoeff.copy()
         ex.lamcoeff[0] -= flexure_x_corr_nm
@@ -427,21 +433,23 @@ def wavelength_extract_helper(SS):
         ex.lamrms = ss.lamrms
 
     if ex.lamrms is not None:
-        print "%4.4i %1.3f" % (ex.seg_id, ex.lamrms)
+        print "%4.4i %1.4f (%s)" % (ex.seg_id, ex.lamrms, fc)
+
+    
     return ex
 
 
 def wavelength_extract(HDUlist_par, wavecalib_par, filename='extracted_spectra.npy',
     flexure_x_corr_nm = 0.0, flexure_y_corr_pix = 0.0, extract_width_par=3,
-    inname='unknown', airmass=None
-    ):
+    inname='unknown', airmass=None, flat_corrections=None):
 
-    global dat, exptime, wavecalib, HDUlist, extract_width
+    global dat, exptime, wavecalib, HDUlist, extract_width, flt_corrs
 
     extract_width = extract_width_par
 
     HDUlist = HDUlist_par
     wavecalib = wavecalib_par
+    flt_corrs = np.copy(flat_corrections)
 
     dat = HDUlist[0].data
     exptime = HDUlist[0].header['EXPTIME']
@@ -994,7 +1002,7 @@ def snap_solution_into_place(PARS):
                     {'value': 0}]  # slope
 
                 pars = NPK.Fit.mpfit_do(resfun, xct, sct, parguess,
-                    error=np.sqrt(sct))
+                    error=np.sqrt(np.abs(sct)))
                 if pars.status != 1: continue
 
                 results.append((line, pars.params[1], pars.perror[1]))
