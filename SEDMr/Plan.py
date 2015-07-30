@@ -31,7 +31,7 @@ def extract_info(infiles):
     update_rate = 1. * len(infiles) / Bar.setup()
     for ix, file in enumerate(infiles):
         if ix % update_rate == 0: Bar.update()
-        FF = pf.open(file)
+        FF = pf.open(file )
         FF[0].header['filename'] = file
         if 'JD' not in FF[0].header:
             #print "Skipping %s" % file
@@ -149,8 +149,6 @@ BIAS = $(addprefix b_,$(SRCS))
 CRRS = $(addprefix crr_,$(BIAS))
 BACK = $(addsuffix .gz,$(addprefix bs_,$(CRRS)))
 FLEX = $(subst .fits,.npy,$(addprefix flex_,$(BACK)))
-TO_FLATTEN = %(FLATFILES)s
-FLATTED = $(addprefix flat_,$(TO_FLATTEN))
 
 bias: bias0.1.fits bias2.0.fits $(BIAS)
 bgd: $(BGD) bias
@@ -192,9 +190,10 @@ bs_twilight.fits.gz: twilight.fits fine.npy
 bs_dome.fits.gz: dome.fits fine.npy
 	$(BGDSUB) fine.npy dome.fits
 
-flat.fits: bs_twilight.fits.gz bs_dome.fits.gz
-	~/spy /scr2/npk/PYTHON/SEDMr/MakeFlat.py bs_twilight.fits.gz --toflat2 bs_dome.fits.gz
-
+flat-dome-700to900.npy: cube.npy dome.fits
+\t~/spy /scr2/npk/PYTHON/SEDMr/Extracter.py cube.npy --A dome.fits --outname dome
+\t~/spy /scr2/npk/PYTHON/SEDMr/Flat.py dome.npy
+    
 wave: fine.npy
 cube: cube.npy
 
@@ -202,16 +201,10 @@ cube: cube.npy
 # It is possible to add rules to both flex and flat so that only
 # the necessary files are created
 flex: back $(FLEX)
-flat: back flat.fits $(FLATTED)
 
 $(FLEX): cube.npy
 	$(eval OUTNAME = $(subst .gz,,$@))
 	$(FLEXCMD) cube.npy $(subst flex_,,$(subst npy,fits,$@)) --outfile $(OUTNAME)
-
-$(FLATTED): flat.fits
-	$(eval LSRC = $(subst flat_,,$@))
-	$(eval LFLEX = $(subst fits.gz,npy,$(addprefix flex_,$(LSRC))))
-	~/spy /scr2/npk/PYTHON/SEDMr/DivideFlat.py flat.fits $(LSRC) --flexnpy $(LFLEX) --outfile $@
 
 '''
 
@@ -232,7 +225,7 @@ def MF_imcombine(objname, files, dependencies=""):
 def MF_single(objname, obsnum, file, standard=None):
     '''Create the MF entry for a observation with a single file. '''
 
-    print objname, obsnum, file
+    #print objname, obsnum, file
 
     tp = {'objname': objname, 'obsfile': "bs_crr_b_%s" % file}
     tp['num'] = '_obs%s' % obsnum
@@ -243,13 +236,13 @@ def MF_single(objname, obsnum, file, standard=None):
     tp['flexname'] = "flex_bs_crr_b_%s.npy" % (file.rstrip(".fits"))
     first = '''# %(outname)s
 %(outname)s: cube.npy %(flexname)s %(obsfile)s.gz
-\t$(EXTSINGLE) cube.npy --A %(obsfile)s.gz --outname %(outname)s %(STD)s --correction std-correction.npy
+\t$(EXTSINGLE) cube.npy --A %(obsfile)s.gz --outname %(outname)s %(STD)s --flat_correction flat-dome-700to900.npy
 
 cube_%(outname)s.fits: %(outname)s
 \t~/spy /scr2/npk/PYTHON/SEDMr/Cube.py %(outname)s --step extract --outname cube_%(outname)s.fits
 ''' % tp
     second = '''corr_%(outname)s: %(outname)s
-\t$(ATM) CORR --A %(outname)s --std %(objname)s --outname corr_%(outname)s\n''' %  tp
+\t$(ATM) CORR --A %(outname)s.gz --std %(objname)s --outname corr_%(outname)s\n''' %  tp
     fn = "%(outname)s" % tp
 
     if standard is None: return first+"\n", fn
@@ -273,7 +266,7 @@ def MF_AB(objname, obsnum, A, B):
     tp['bgdnameB'] = "bgd_%s.npy" % (B.rstrip('.fits'))  
 
     return '''# %(outname)s\n%(outname)s: cube.npy %(A)s.gz %(B)s.gz %(flexname)s
-\t$(EXTPAIR) cube.npy --A %(A)s --B %(B)s --outname %(outname)s --correction std-correction.npy\n\n''' %  tp, "%(outname)s" % tp
+\t$(EXTPAIR) cube.npy --A %(A)s.gz --B %(B)s.gz --outname %(outname)s --flat_correction flat-dome-700to900.npy\n\n''' %  tp, "%(outname)s " % tp
 
 
 def MF_ABCD(objname, obsnum, files): 
@@ -290,7 +283,7 @@ def MF_ABCD(objname, obsnum, files):
         C.rstrip('.fits'),
         D.rstrip('.fits'))
     return '''%(outname)s: fine.npy %(A)s %(B)s %(C)s %(D)s %(flexname)s
-\t$(EXTPAIR) fine.npy --A %(A)s --B %(B)s --C %(C)s --D %(D)s --outname %(outname)s --correction std-correction.npy\n''' %  tp, "%(outname)s" % tp
+\t$(EXTPAIR) fine.npy --A %(A)s --B %(B)s --C %(C)s --D %(D)s --outname %(outname)s \n''' %  tp, "%(outname)s" % tp
 
 
 
@@ -339,7 +332,7 @@ def to_makefile(objs, calibs):
                 continue
 
             # Handle science targets
-            print "****", objname, obsnum, obsfiles
+            #print "****", objname, obsnum, obsfiles
             if len(obsfiles) == 2:
                 m,a = MF_AB(objname, obsnum, obsfiles[0], obsfiles[1])
 
@@ -371,16 +364,13 @@ def to_makefile(objs, calibs):
     stds += " "
 
 
-    flattened_flatfiles = sum(flatfiles, [])
-    flattened_flatfiles = ["bs_crr_b_%s.gz" % fn for fn in flattened_flatfiles]
-    flatfilestr = ' '.join([fn for fn in flattened_flatfiles])
-
-    preamble = make_preamble % {'FLATFILES': flatfilestr}
+    preamble = make_preamble
 
     f = open("Makefile", "w")
     clean = "\nclean:\n\trm %s %s\n\n" % (all, stds)
-    corr = "\nstd-correction.npy: %s\n\t$(ATM) SUM --outname std-correction.npy --files %s\n" % (stds, stds)
-    f.write(preamble + "stds: %s std-correction.npy\n\n" % (stds) +
+    corr = "\nstd-correction.npy:\n\t$(ATM) CREATE --outname std-correction.npy --files spectrum_STD*npy \n\n" 
+
+    f.write(preamble + "stds: std-correction.npy\n\n" +
         "\nall: stds %s %s" % (all, clean) + "\n\n" +
         corr + MF + "\n\n" + flexures)
     f.close()
