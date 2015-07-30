@@ -35,7 +35,8 @@ class Spectra(object):
         for ix, el in enumerate(data):
             
             try:
-                l,fl = el.get_flambda()
+                l,fl = el.get_counts()
+                fl = el.specw
                 haix = find_ha(el.lamcoeff)
             except: continue
             
@@ -46,13 +47,34 @@ class Spectra(object):
 
             positions.append( (x,y) )
 
+        if len(positions) == 0:
+            raise Exception("For some reason, no good spectrum exists in the submitted spectral set.")
+
         data = np.array(positions)
         bad = (data != data)
         data[bad] = -999
         self.KT = scipy.spatial.KDTree(data)
         self.good_positions = np.array(good_positions)
 
-    def to_xyv(self, lmin=500, lmax=700):
+    def to_xyv(self, lmin=500, lmax=700, coefficients='lamcoeff'):
+        ''' Method convers a spetral set into X, Y, and value positions
+        
+        X is the location of Ha based on either lambda coefficients or
+            median coefficients
+        Y is based on the segmentation map.
+        The value is the median signal strength in the lmin to lmax range.
+
+        Returns:
+            X,Y,V tuple representing the X location (in arcsec), Y location
+                (in arcsec), and the median value (V) of the spaxel
+                between lmin and lmax.
+        '''
+
+        allowed_coeff = ['lamcoeff', 'mdn_coeff', 'hgcoef']
+        if coefficients not in allowed_coeff:
+            raise Exception("Named coefficient %s should be one of %s" % 
+                (coefficients, allowed_coeff))
+
         
         Xs = []
         Ys = []
@@ -64,8 +86,10 @@ class Spectra(object):
             el = self.data[datix]
             try:
                 l,fl = el.get_flambda()
-                haix = find_ha(el.lamcoeff)
-            except: continue
+                lamcoeff = getattr(el, coefficients)
+                haix = find_ha(lamcoeff)
+            except: 
+                continue
 
             ok = (l > lmin) & (l <= lmax)
 
