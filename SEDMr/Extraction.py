@@ -113,7 +113,10 @@ class Extraction():
                 optimal extraciton.
         '''
         lam = self.get_lambda_nm()
-        sp = getattr(self, the_spec)
+        if getattr(self, the_spec) is not None:
+            sp = getattr(self, the_spec)
+        else:
+            sp = self.specw
         return [lam, sp]
 
 
@@ -138,17 +141,29 @@ class Extraction():
         min = 60.0
         
         lam = self.get_lambda_nm()
-        ss = getattr(self, the_spec)
+        if getattr(self, the_spec) is not None:
+            ss = getattr(self, the_spec)
+        else:
+            ss = self.specw
 
-        el_p10m = ss*(min*10)/self.exptime
+        el_p10m = ss*(min*10)/self.get_exptime()
         return [lam, el_p10m/dlam]
 
+
+    def get_exptime(self):
+        ''' Returns exptime. If None, returns 1 '''
+
+        if self.exptime is None: return 1
+        return self.exptime
 
     def get_lambda_nm(self):
         '''Returns lambda spectrum in nm'''
         xs = np.arange(*self.xrange)
         
-        lam = chebval(xs, self.lamcoeff)
+        if self.lamcoeff is not None:
+            lam = chebval(xs, self.lamcoeff)
+        else:
+            lam = chebval(xs, self.mdn_coeff)
 
         return lam
 
