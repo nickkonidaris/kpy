@@ -40,7 +40,8 @@ def go(fr, to):
         if os.path.exists(outdir) == False:
             os.mkdir(outdir)
         print path, outfile
-        shutil.copy2(path, os.path.join(outdir,outfile))
+        try: shutil.copy2(path, os.path.join(outdir,outfile))
+        except IOError: continue
 
         
 if __name__ == '__main__':
