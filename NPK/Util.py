@@ -71,9 +71,10 @@ def air_index(lam, P=600, T=7, f=8):
 
     return nm1e6/1e6
 
-def atm_disper(l2, l1, airmass):
+def atm_disper(l2, l1, airmass, **kwargs):
     ''' atmospheric dispersion in arcsecond between l2 and l1 in micron
-        at a given airmass '''
+        at a given airmass. See air index for documentation on pressure,
+        temperature, and water vapor pressure'''
 
     z = np.arccos(1.0/airmass)
-    return 206265 * (air_index(l2) - air_index(l1)) * np.tan(z)
+    return 206265 * (air_index(l2, **kwargs) - air_index(l1, **kwargs)) * np.tan(z)
