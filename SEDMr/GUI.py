@@ -54,7 +54,7 @@ class PositionPicker(object):
     picked = None
     radius_as = None
 
-    def __init__(self, spectra=None, figure=None, pointsize=55, bgd_sub=False, radius_as=3):
+    def __init__(self, spectra=None, figure=None, pointsize=55, bgd_sub=False, radius_as=3, PRLLTC=None, lmin=600, lmax=650):
         ''' Create spectum picking gui.
 
         Args:
@@ -64,13 +64,16 @@ class PositionPicker(object):
 
         self.spectra = spectra
         self.pointsize = pointsize
+        self.lmin = lmin
+        self.lmax = lmax
 
-        self.Xs, self.Ys, self.Vs = spectra.to_xyv()
+        self.Xs, self.Ys, self.Vs = spectra.to_xyv(lmin=lmin, lmax=lmax)
 
         if bgd_sub:
             self.Vs -= np.median(self.Vs)
 
         pl.ioff()
+        pl.title("Image from %s to %s nm" % (self.lmin, self.lmax))
         self.figure = pl.figure(1)
 
         self.radius_as = radius_as
@@ -79,7 +82,8 @@ class PositionPicker(object):
         self.draw_cube()
 
     def draw_cube(self):
-        pl.scatter(self.Xs, self.Ys, c=self.Vs, s=self.pointsize, linewidth=0)
+        pl.scatter(self.Xs, self.Ys, c=self.Vs, s=self.pointsize, linewidth=0, 
+            cmap=pl.cm.Spectral, vmin=-100, vmax=100)
             
         pl.ylim(-20,20)
         pl.xlim(-20,20)
@@ -121,7 +125,7 @@ class WaveFixer(object):
     ax_spec  = None
 
 
-    def __init__(self, cube=None, figure=None, pointsize=55, bgd_sub=False, radius_as=3):
+    def __init__(self, cube=None, figure=None, pointsize=65, bgd_sub=False, radius_as=3):
         ''' Create spectum picking gui.
 
         Args:

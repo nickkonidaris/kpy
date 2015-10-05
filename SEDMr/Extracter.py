@@ -4,20 +4,64 @@ import numpy as np
 import pylab as pl
 import pyfits as pf
 import scipy.signal as SG
+import sets
 import itertools
 
-
-
+from astropy.coordinates import Angle
 from numpy.polynomial.chebyshev import chebfit, chebval
 from scipy.interpolate import interp1d
 import SEDMr.Extraction as Extraction
 import SEDMr.Wavelength as Wavelength
 import SEDMr.Spectra as SS
 import SEDMr.GUI as GUI
+import NPK.Util
 import NPK.Standards as Stds
 import NPK.Atmosphere as Atm
 
-def identify_spectra_gui(spectra, outname=None, radius=2):
+
+def atm_dispersion_positions(PRLLTC, pos, leff, airmass):
+    ''' Return list of (X,Y) positions indicating trace of atmospheric dispersion 
+    
+    Args:
+        PRLLTC: parralactic angle in Angle class 
+        pos: (x,y) position of source in arcsec at wavelength leff
+        leff: Effective wavelength, micron
+        airmass: Atmospheric airmass. Note, if airmass=1 there's no dispersion
+
+    Returns:
+        List of positions of the source in arcsec: [ (x0,y0) ... (xn,yn) ]
+
+        Note: if airmass=1, then the list is equivalent of [ pos ]
+    
+    '''
+    print PRLLTC, pos, leff, airmass
+
+    blue_ad = NPK.Util.atm_disper(0.38, leff, airmass)
+    red_ad  = NPK.Util.atm_disper(leff, 0.95, airmass)
+    print 'Blue AD is %1.1f", Red Ad is %1.1f" PRLLTC %3.1f' % (blue_ad, red_ad,
+        PRLLTC.degree)
+    
+    dx = -np.sin(PRLLTC.radian) 
+    dy =  np.cos(PRLLTC.radian) 
+
+    DELTA = 0.1
+    bpos = np.array(pos) - np.array([dx, dy]) * blue_ad * DELTA
+
+    positions = []
+    nstep = np.int(np.round((blue_ad - red_ad)/DELTA))
+    if nstep == 0: nstep=1
+    for delta in xrange(nstep):
+        t = [bpos[0] + delta * dx * DELTA, bpos[1] + delta * dy * DELTA]
+        positions.append(t)
+
+    DX = positions[0][0] - positions[-1][0]
+    DY = positions[0][1] - positions[-1][1]
+
+    print "DX %2.1f, DY %2.1f, D %2.1f" % (DX, DY, np.sqrt(DX*DX + DY*DY))
+    return positions
+
+
+def identify_spectra_gui(spectra, outname=None, radius=2, lmin=650, lmax=700, PRLLTC=None, airmass=1.0):
     ''' Returns index of spectra picked in GUI.
 
     NOTE: Index is counted against the array, not seg_id'''
@@ -25,14 +69,24 @@ def identify_spectra_gui(spectra, outname=None, radius=2):
     print "Looking in a %s as radius" % radius
     pl.ioff()
     KT = SS.Spectra(spectra)
-    g = GUI.PositionPicker(KT, bgd_sub=True, radius_as=radius)
+    g = GUI.PositionPicker(KT, bgd_sub=True, radius_as=radius, lmin=lmin, lmax=lmax,        PRLLTC=None)
     pos  = g.picked
-
-    kix = KT.KT.query_ball_point(pos, radius)
-
     pl.close()
 
-    return KT.good_positions[kix], pos
+    leff = (lmax+lmin)/2.0
+    if PRLLTC is not None:
+        positions = atm_dispersion_positions(PRLLTC, pos, leff, airmass)
+    else:
+        positions = [pos]
+
+    all_kix = []
+    for the_pos in positions:
+        all_kix.append(KT.KT.query_ball_point( the_pos, radius ))
+
+    all_kix = list(itertools.chain(*all_kix))
+    kix = list(sets.Set(all_kix))
+
+    return KT.good_positions[kix], pos, positions
 
 def identify_bgd_spectra(spectra, pos, inner=3, outer=6):
     KT = SS.Spectra(spectra)
@@ -110,7 +164,7 @@ def identify_spectra(spectra, outname=None, low=-np.inf, hi=np.inf, plot=False):
 
     return ixs[ok]
 
-def to_image(spectra, meta, outname, posA=None, posB=None, radius=None):
+def to_image(spectra, meta, outname, posA=None, posB=None, radius=None, adcpos=None):
     ''' Convert spectra list into image_[outname].pdf '''
     def Strength(x):
         if x.xrange is None: return None
@@ -143,6 +197,10 @@ def to_image(spectra, meta, outname, posA=None, posB=None, radius=None):
         pl.axvline(posB[0], color='black', linewidth=.5)
         pl.axhline(posB[1], color='black', linewidth=.5)
     pl.scatter(XS, YS, c=sig,s=50,marker='H',linewidth=0)
+
+    if adcpos is not None:
+        for p in adcpos:
+            pl.plot(p[0], p[1], 'rx')
 
     pl.xlabel("X [as]")
     pl.ylabel("Y [as]")
@@ -469,15 +527,32 @@ def handle_A(A, fine, outname=None, standard=None, corrfile=None,
             flexure_y_corr_pix=flexure_y_corr_pix,
             flat_corrections = flat_corrections)
 
+        meta['airmass'] = spec[0].header['airmass']
+        header = {}
+        for k,v in spec[0].header.iteritems():
+            try: header[k] = v
+            except: pass
+        meta['HA'] = spec[0].header['HA']
+        meta['Dec'] = spec[0].header['Dec']
+        meta['RA'] = spec[0].header['RA']
+        meta['PRLLTC'] = spec[0].header['PRLLTC']
+        meta['equinox'] = spec[0].header['Equinox']
+        meta['utc'] = spec[0].header['utc']
+
+        meta['header'] = header
+
         np.save(outname, [E, meta])
 
-    meta['airmass'] = spec[0].header['airmass']
-    six, pos = identify_spectra_gui(E, radius=radius)
+    six, pos, adcpos = identify_spectra_gui(E, radius=radius, 
+        PRLLTC=Angle(meta['PRLLTC'], unit='deg'), 
+        lmin=650, lmax=700, airmass=meta['airmass'])
+
+ 
     skyix = identify_bgd_spectra(E, pos, inner=radius*1.1)
     res = interp_spectra(E, six, outname=outname+".pdf", corrfile=corrfile)
     sky = interp_spectra(E, skyix, onto=res[0]['nm'], outname=outname+"_sky.pdf", corrfile=corrfile)
     
-    to_image(E, meta, outname, posA=pos)
+    to_image(E, meta, outname, posA=pos, adcpos=adcpos)
     if standard is not None:
         print "STANDARD"
         wav = standard[:,0]/10.0
@@ -518,7 +593,8 @@ def handle_A(A, fine, outname=None, standard=None, corrfile=None,
 
 
 def handle_AB(A, B, fine, outname=None, corrfile=None,
-    Aoffset=None, Boffset=None, radius=2, flat_corrections=None):
+    Aoffset=None, Boffset=None, radius=2, flat_corrections=None,
+    lmin=650, lmax=700):
     '''Loads 2k x 2k IFU frame "A" and "B" and extracts A-B and A+B spectra
     from the "fine" location. 
 
@@ -555,12 +631,17 @@ def handle_AB(A, B, fine, outname=None, corrfile=None,
 
     if Aoffset is not None:
         ff = np.load(Aoffset)
+        f2 = np.load(Aoffset)
         flexure_x_corr_nm = ff[0]['dXnm']
-        flexure_y_corr_pix = ff[0]['dYpix']
+        flexure_y_corr_pix = -ff[0]['dYpix']
+
+        print "Dx %2.1f, %2.1f | Dy %2.1f %2.1f" % (ff[0]['dXnm'], f2[0]['dXnm'],
+            ff[0]['dYpix'], f2[0]['dYpix']) 
     else:
         flexure_x_corr_nm = 0
         flexure_y_corr_pix = 0
 
+    read_var = 5*5
     if os.path.isfile(outname + ".fits.npy"):
         print "USING extractions in %s!" % outname
         E, meta = np.load(outname + ".fits.npy")
@@ -586,6 +667,20 @@ def handle_AB(A, B, fine, outname=None, corrfile=None,
             flat_corrections=flat_corrections)
         meta['airmass1'] = diff[0].header['airmass1']
         meta['airmass2'] = diff[0].header['airmass2']
+        meta['airmass'] = diff[0].header['airmass']
+        header = {}
+        for k,v in diff[0].header.iteritems():
+            try: header[k] = v
+            except: pass
+        meta['HA'] = diff[0].header['HA']
+        meta['Dec'] = diff[0].header['Dec']
+        meta['RA'] = diff[0].header['RA']
+        meta['PRLLTC'] = diff[0].header['PRLLTC']
+        meta['equinox'] = diff[0].header['Equinox']
+        meta['utc'] = diff[0].header['utc']
+
+        meta['header'] = header
+
         meta['exptime'] = diff[0].header['exptime']
         np.save(outname, [E, meta])
 
@@ -598,10 +693,14 @@ def handle_AB(A, B, fine, outname=None, corrfile=None,
 
         np.save("var_" + outname, [E_var, meta_var])
 
-    sixA, posA = identify_spectra_gui(E, radius=radius)
-    sixB, posB = identify_spectra_gui(E, radius=radius)
+    sixA, posA, all_A = identify_spectra_gui(E, radius=radius, 
+        PRLLTC=Angle(meta['PRLLTC'], unit='deg'),
+        lmin=lmin, lmax=lmax, airmass=meta['airmass'])
+    sixB, posB, all_B = identify_spectra_gui(E, radius=radius,
+        PRLLTC=Angle(meta['PRLLTC'], unit='deg'),
+        lmin=lmin, lmax=lmax, airmass=meta['airmass'])
 
-    to_image(E, meta, outname, posA=posA, posB=posB)
+    to_image(E, meta, outname, posA=posA, posB=posB, adcpos=all_A)
 
     skyA = identify_bgd_spectra(E, posA)
     skyB = identify_bgd_spectra(E, posB)
@@ -613,6 +712,7 @@ def handle_AB(A, B, fine, outname=None, corrfile=None,
     skyB = interp_spectra(E, skyB, sign=-1, outname=outname+"_skYB.pdf", corrfile=corrfile)
     varA = interp_spectra(E_var, sixA, sign=1, outname=outname+"_A_var.pdf", corrfile=corrfile)
     varB = interp_spectra(E_var, sixB, sign=1, outname=outname+"_B_var.pdf", corrfile=corrfile)
+    
     
     ## Plot out the X/Y selected spectra
     XSA = []
@@ -644,8 +744,11 @@ def handle_AB(A, B, fine, outname=None, corrfile=None,
     ll = Wavelength.fiducial_spectrum()
     sky_A = interp1d(skyA[0]['nm'], skyA[0]['ph_10m_nm'], bounds_error=False)
     sky_B = interp1d(skyB[0]['nm'], skyB[0]['ph_10m_nm'], bounds_error=False)
-
     sky = np.nanmean([sky_A(ll), sky_B(ll)], axis=0)
+
+    var_A = interp1d(varA[0]['nm'], varA[0]['ph_10m_nm'], bounds_error=False)
+    var_B = interp1d(varB[0]['nm'], varB[0]['ph_10m_nm'], bounds_error=False)
+    varspec = np.nanmean([var_A(ll), var_B(ll)], axis=0) * (len(sixA) + len(sixB))
 
     res = np.copy(resA)
     res = [{"doc": resA[0]["doc"], "ph_10m_nm": np.copy(resA[0]["ph_10m_nm"]),
@@ -671,7 +774,7 @@ def handle_AB(A, B, fine, outname=None, corrfile=None,
     res[0]['extinction_corr_A'] = extCorrA
     res[0]['extinction_corr_B'] = extCorrB
     res[0]['skyph'] = sky
-    res[0]['var'] = np.nanmean([varA[0]['ph_10m_nm'], varB[0]['ph_10m_nm']], 0) * (len(sixA) + len(sixB))
+    res[0]['var'] = varspec
     res[0]['radius_as'] = radius
     res[0]['positionA'] = posA
     res[0]['positionB'] = posA
@@ -707,104 +810,6 @@ def measure_flexure(sky):
 
     return dnm
 
-
-def handle_ABCD(A, B, C, D, fine, outname=None, nsiglo=-1, nsighi=1, corrfile=None,flexure_pix_corr=(0,0)):
-    '''Processes A-B files.
-
-    1. Subtracts files to create A-(B+C+D), B-(A+C+D), C-(A+B+D), D-(A+B+C)
-    2. Extracts the spectra from the four files
-    3. Identifies the object as some multiple of the sigma
-    
-    Args:
-        [ABCD]: string of filename
-        fine: data structure containing the fine wavelength solution
-        outname: Output file name, default is not to write output
-        nsig[lo|hi]: float of the number of sigma to extract from (lo|hi)
-        corrfile: Atmospheric extinction correction filename
-        flexure_correction: 2-tuple containing float of pixel shift to apply in X, Y to correct flexure
-
-    '''
-
-
-    raise Exception("This code is not ready for prime time")
-
-    if offset is None: offset = 0
-    fine = np.load(fine)
-    if outname is None: raise Exception("need output name")
-
-    Ad = combine4(A, B,C,D, '%s_BCD.fits' % outname) 
-    Bd = combine4(B, A,C,D, '%s_ACD.fits' % outname) 
-    Cd = combine4(C, A,B,D, '%s_ABD.fits' % outname) 
-    Dd = combine4(D, A,B,C, '%s_ABC.fits' % outname) 
-    Sky = combines(A,B,C,D, '%s_ABCD.fits' % outname)
-
-    Ae = handle_extract(Ad, outname='%s_BCD.fits' % outname, fine=fine, 
-        offset=offset) 
-    Be = handle_extract(Bd, outname='%s_ACD.fits' % outname, fine=fine,
-        offset=offset) 
-    Ce = handle_extract(Cd, outname='%s_ABD.fits' % outname, fine=fine,
-        offset=offset) 
-    De = handle_extract(Dd, outname='%s_ABC.fits' % outname, fine=fine,
-        offset=offset) 
-    Se = handle_extract(Sky, outname='%s_ABCD.fits' % outname, fine=fine,
-        offset=offset) 
-
-
-    sixA, posA = identify_spectra_gui(Ae, outname=outname+"_A.pdf")
-    sixB, posB = identify_spectra_gui(Be, outname=outname+"_B.pdf")
-    sixC, posC = identify_spectra_gui(Ce, outname=outname+"_C.pdf")
-    sixD, posD = identify_spectra_gui(De, outname=outname+"_D.pdf")
-
-    six1 = np.array(sixA.tolist() + sixB.tolist() )
-    six2 = np.array(sixC.tolist() + sixD.tolist())
-
-    sky1 = interp_spectra(Se, six1, outname=outname+"_sky.pdf", 
-        corrfile=corrfile)[0]
-
-    dnm = 0
-    sky2 = interp_spectra(Se, six2, outname=outname+"_sky.pdf", 
-        corrfile=corrfile, dnm=dnm)[0]
-
-    print "CHECK: corrected sky spectra are offset by %s nm" % check
-
-    resA = interp_spectra(Ae, sixA, outname=outname+"_A.pdf", 
-        corrfile=corrfile, dnm=dnm)[0]
-    resB = interp_spectra(Be, sixB, outname=outname+"_B.pdf", 
-        corrfile=corrfile, dnm=dnm)[0]
-    resC = interp_spectra(Ce, sixC, outname=outname+"_C.pdf", 
-        corrfile=corrfile, dnm=dnm)[0]
-    resD = interp_spectra(De, sixD, outname=outname+"_D.pdf", 
-        corrfile=corrfile,dnm=dnm)[0]
-
-    np.save(outname + "A.npy", [resA])
-    np.save(outname + "B.npy", [resB])
-    np.save(outname + "C.npy", [resC])
-    np.save(outname + "D.npy", [resD])
-    l = resA['nm']
-    sp = resA['ph_10m_nm']
-    cc  = resA['corrected-spec']
-
-    fB = interp1d(resB['nm'], resB['ph_10m_nm'], fill_value=0,
-        bounds_error=False)
-    fC = interp1d(resC['nm'], resC['ph_10m_nm'], fill_value=0, 
-        bounds_error=False)
-    fD = interp1d(resD['nm'], resD['ph_10m_nm'], fill_value=0,
-        bounds_error=False)
-
-    cB = interp1d(resB['nm'], resB['corrected-spec'], fill_value=0,
-        bounds_error=False)
-    cC = interp1d(resC['nm'], resC['corrected-spec'], fill_value=0, 
-        bounds_error=False)
-    cD = interp1d(resD['nm'], resD['corrected-spec'], fill_value=0,
-        bounds_error=False)
-
-    sp += fB(l) + fC(l) + fD(l)
-    cc += cB(l) + cC(l) + cD(l)
-
-
-    result = [{"nm": l, "ph_10m_nm": sp, "corrected-spec": cc}]
-
-    np.save(outname + ".npy", result)
 
 
 if __name__ == '__main__':
@@ -843,14 +848,7 @@ if __name__ == '__main__':
         flat = np.load(args.flat_correction)
     else: flat = None
 
-    if args.A is not None and args.B is not None and args.C is not None \
-        and args.D is not None:
-        handle_ABCD(args.A, args.B, args.C, args.D, args.fine, 
-                outname=args.outname,
-            nsiglo=args.nsiglo, nsighi=args.nsighi, corrfile=args.correction,
-            offset=args.Aoffset, flat_corrections=flat)
-
-    elif args.A is not None and args.B is not None:
+    if args.A is not None and args.B is not None:
         print "Handle AB"
         handle_AB(args.A, args.B, args.fine, outname=args.outname,
             corrfile=args.correction,

@@ -4,8 +4,6 @@ import pylab as pl
 import pyfits as pf
 import sys
 
-import astropysics
-
 
 def imcombine(filelist, out, bpmask=None, reject="none", nlow=None,
         nhigh=None):

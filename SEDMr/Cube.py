@@ -54,19 +54,18 @@ Even Q coordinates look like
 
 '''
 
-def QR_to_img(exts, Size=2, outname="cube.fits"):
+def QR_to_img(exts, Size=4, outname="cube.fits"):
     
-    Qs = np.array([ext.Q_ix for ext in exts], dtype=np.float)
-    Rs = np.array([ext.R_ix for ext in exts], dtype=np.float)
+    Xs = np.array([ext.X_as for ext in exts], dtype=np.float)
+    Ys = np.array([ext.Y_as for ext in exts], dtype=np.float)
 
-    minx = Size * np.sqrt(3) * (np.nanmin(Qs) + np.nanmin(Rs)/2)
-    miny = Size * 3./2. * (np.nanmin(Rs))
-    maxx = Size * np.sqrt(3) * (np.nanmax(Qs) + np.nanmax(Rs)/2)
-    maxy = Size * 3./2. * (np.nanmax(Rs))
+    minx = Size * np.nanmin(Xs)
+    miny = Size * np.nanmin(Ys)
+    maxx = Size * np.nanmax(Xs)
+    maxy = Size * np.nanmax(Ys)
 
-
-    Dx = maxx-minx
-    Dy = maxy-miny
+    Dx = (maxx-minx)/.25
+    Dy = (maxy-miny)/.25
     l_grid = Wavelength.fiducial_spectrum()
     l_grid = l_grid[::-1]
     dl_grid = np.diff(l_grid)
@@ -94,11 +93,9 @@ def QR_to_img(exts, Size=2, outname="cube.fits"):
 
         allspec[cnt, :] = fi
 
-        try:
-            x = np.round(Size*np.sqrt(3.) * (ext.Q_ix + ext.R_ix/2)) + XSz
-            y = np.round(Size*3./2. * ext.R_ix) + YSz
-        except:
-            continue
+        x = (ext.X_as - minx)/0.25
+        y = (ext.Y_as - miny)/0.25
+
         try: 
             for dx in [-1,0,1]:
                 for dy in [-1,0,1]:
@@ -282,7 +279,8 @@ def extraction_to_cube(exts, outname="G.npy"):
 
     # Note 0.633 is plate scale measured on 22 May 2014.
     
-    t= np.radians(165.0+45)
+    #t= np.radians(165.0+45)
+    t= np.radians(180+22)
     Rot = np.array([[np.cos(t), -np.sin(t)],
                     [np.sin(t),  np.cos(t)]])
     for ix, ext in enumerate(exts):
@@ -328,6 +326,14 @@ if __name__ == '__main__':
         print "EXTRACTING"
         ext,meta = np.load(infile)
         QR_to_img(ext, Size=2, outname=args.outname)
+    elif step == 'dump':
+        cube = np.load(infile)
+        Xs = np.array([c.X_as for c in cube])
+        Ys = np.array([c.Y_as for c in cube])
+        Sid = np.array([c.seg_id for c in cube])
+
+        dat = np.array([Xs,Ys,Sid])
+        np.savetxt("dump.txt", dat.T)
     else:
         print "NO STEP TO PERFORM"
 

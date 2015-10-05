@@ -14,6 +14,59 @@ from numpy.polynomial.chebyshev import chebfit, chebval
 CRVAL1 = 239.5
 CRPIX1 = 88.98
 
+def readspec(path, corrname='std-correction.npy'):
+    ''' Read numpy spec file 
+    
+    Returns:
+        wavelength array [N]: in nm
+        spectrum array [N]: in erg/s/cm2/ang
+        sky spectrum array [N]: in spectrum units
+        standard deviation of spectrum [N]: in spectrum units
+        Spectrum object: full spectrum from where above derived
+        meta {}: The meta dictionary associated with the spectrum
+        
+    '''
+
+    if not os.path.isfile(corrname):
+        print "Loading old standard correction"
+        corrname = '/scr2/npk/sedm/OUTPUT/2015mar25/std-correction.npy'
+        
+    ss = np.load(path)[0]
+
+    corr = np.load(corrname)[0]
+    corf = interp1d(corr['nm'],corr['correction'], bounds_error=False,
+        fill_value=1.0)
+
+    if ss.has_key('extinction_corr'):
+        ext = ss['extinction_corr']
+        ec = np.median(ext)
+    elif ss.has_key('extinction_corr_A'):
+        ext = ss['extinction_corr_A']
+        ec = np.median(ext)
+
+    try: et = ss['exptime']
+    except: et = 0
+    
+    lam, spec = ss['nm'], ss['ph_10m_nm']*corf(ss['nm'])
+
+    if ss.has_key('skyph'):
+        skyspec = ss['skyph'] * corf(lam)
+    else:
+        skyspec = None
+        print "Spectrum in %s has no sky spectrum" % path 
+    
+    if ss.has_key('var'):
+        std = np.sqrt(np.abs(ss['var']) * corf(lam))
+    else:
+        std = None
+        print "Spectrum in %s has no var" % path
+
+    try: meta = ss['meta']
+    except: meta = {}
+    return lam, spec, skyspec, std, ss, meta
+
+
+
 def readfits(path):
     ''' Read fits file at path or path.gz '''
 

@@ -5,60 +5,76 @@ import os
 import pylab as pl
 import pyfits as pf
 from scipy.interpolate import interp1d
+import scipy.signal
 import sys
 
- 
-def checkSpec(specname, corrname='std-correction.npy'):
+import IO
 
-    if not os.path.isfile(corrname):
+ 
+def checkSpec(specname, corrname='std-correction.npy', redshift=0, smoothing=0):
+
+    if not os.path.isfile(corrname) and corrname is not None:
         print "Loading old standard correction"
         corrname = '/scr2/npk/sedm/OUTPUT/2015mar25/std-correction.npy'
+
+    if corrname is not None:
+        corr = np.load(corrname)[0]
+        corf = interp1d(corr['nm'], corr['correction'], bounds_error=False,
+            fill_value=0.0)
+    else:
+        corf = lambda x: 1.0
         
-    ss = np.load(specname)[0]
+    corf = lambda x: 1.0
+
+
+    lam, spec, skyspec, stdspec, ss, meta = IO.readspec(specname)
+    lam = np.roll(lam, 3)
 
     print "Plotting spectrum in %s" % specname
     try: print "Extraction radius: %1.2f" % ss['radius_as']
     except: pass
-    print ss.keys()
 
-    corr = np.load(corrname)[0]
-    corf = interp1d(corr['nm'],corr['correction'], bounds_error=False,
-        fill_value=1.0)
+    try: ec = meta['airmass']
+    except: ec = 0
 
-    ec = 0
-    ext = None
-    if ss.has_key('extinction_corr'):
-        ext = ss['extinction_corr']
-        ec = np.median(ext)
-    elif ss.has_key('extinction_corr_A'):
-        ext = ss['extinction_corr_A']
-        ec = np.median(ext)
+    try: et = ss['exptime']
+    except: et = 0
 
-    et = ss['exptime']
-    pl.title("%s\n(airmass corr factor ~ %1.2f Exptime: %i)" % (specname, ec, et))
+    pl.title("%s\n(airmass: %1.2f | Exptime: %i)" % (specname, ec, et))
     pl.xlabel("Wavelength [nm]")
     pl.ylabel("erg/s/cm2/ang")
-    if "STD" in specname:
-        pl.ylim(-3e-16,3e-13)
+
+    OK = (lam > 380) & (lam < 1000)
+    legend = ["obj",]
+    lamz = lam/(1+redshift)
+    if smoothing == 0:
+        pl.step(lamz[OK], spec[OK]*corf(lam[OK]), linewidth=3)
     else:
-        pl.ylim(-3e-16,3e-15)
-    
-    lam, spec = ss['nm'], ss['ph_10m_nm']*corf(ss['nm'])
-    pl.step(lam, spec, linewidth=3)
-    try: pl.step(ss['skynm'], ss['skyph']*corf(ss['skynm']))
-    except: pl.step(ss['nm'], ss['skyph']*(ss['N_spaxA']+ss['N_spaxB'])*
-        corf(ss['nm']))
+        if smoothing > 5: order = 2
+        else: order = 1
+        smoothed = scipy.signal.savgol_filter(spec[OK], smoothing, order)
+        pl.step(lamz[OK], smoothed*corf(lamz[OK]), linewidth=3)
 
-    try: pl.step(ss['nm'], np.sqrt(np.abs(ss['var']))*corf(ss['nm']))
-    except: pass
+    if skyspec is not None:
+        pl.step(lamz[OK], skyspec[OK]*corf(lam[OK]))
+        legend.append("sky")
 
-    pl.legend(['obj', 'sky', 'err'])
-    pl.xlim(360,1100)
+    if stdspec is not None:
+        pl.step(lamz[OK], stdspec[OK]*corf(lam[OK]))
+        legend.append("err")
+
+    pl.legend(legend)
+    pl.xlim(360,1000)
+
+    roi = (lam > 400) & (lam < 950)
+    mx = np.max(spec[roi]*corf(lam[roi]))
+    pl.ylim(-mx/10,mx)
     pl.grid(True)
     pl.ioff()
     pl.show()
 
-    np.savetxt('out.txt', np.array([lam, spec]).T)
+    np.savetxt('out.txt', np.array([lam, spec*corf(lam)]).T)
+    print "saved to out.txt"
 
 
 def checkCube(cubename):
@@ -93,6 +109,8 @@ if __name__ == '__main__':
     parser.add_argument('--cube', type=str, help='Fine correction path')
     parser.add_argument('--spec', type=str, help='Extracted spectrum file')
     parser.add_argument('--corrname', type=str, default='std-correction.npy')
+    parser.add_argument('--redshift', type=float, default=0, help='Redshift')
+    parser.add_argument('--smoothing', type=float, default=0, help='Smoothing in pixels')
 
 
     args = parser.parse_args()
@@ -100,6 +118,7 @@ if __name__ == '__main__':
     if args.cube is not None:
         checkCube(args.cube)
     if args.spec is not None:
-        checkSpec(args.spec, corrname=args.corrname)
+        checkSpec(args.spec, corrname=args.corrname, redshift=args.redshift,
+            smoothing=args.smoothing)
 
 

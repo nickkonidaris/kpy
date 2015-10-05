@@ -70,7 +70,7 @@ def identify_observations(headers):
         exptime = header['exptime']
         adcspeed = header['ADCSPEED']
         if "test" in obj: continue
-        if "Calib" in obj:
+        if "Calib" in obj or "bias" in obj:
 
             def appendToCalibs(Str):
 
@@ -142,7 +142,7 @@ IMCOMBINE = ~/spy /scr2/npk//PYTHON/SEDMr/Imcombine.py
 
 BSUB = $(PY) $(PYC)/Bias.py
 BGDSUB =  $(PY) $(PYC)r/SubtractBackground.py
-CRRSUB =  /scr2/npk/Ureka/variants/common/bin/PyCosmic --fwhm=2 --iter 4 --rlim 1.0
+CRRSUB =  /scr2/npk/Ureka/variants/common/bin/PyCosmic --fwhm=3 --iter 4 --rlim 1.8 --siglim 8
 
 SRCS = $(wildcard ifu*fits)
 BIAS = $(addprefix b_,$(SRCS))
@@ -173,7 +173,7 @@ seg_Hg.fits: Hg.fits
 	~/spy /scr2/npk/PYTHON/SEDMr/SexSpectra.py Hg.fits
 
 dome.fits_segments.npy: seg_dome.fits
-	~/spy /scr2/npk/PYTHON/SEDMr/FindSpectra.py seg_dome.fits dome.fits dome.fits_segments
+	~/spy /scr2/npk/PYTHON/SEDMr/FindSpectra.py seg_dome.fits dome.fits dome.fits_segments --order 1
 
 rough.npy: dome.fits_segments.npy seg_Hg.fits
 	~/spy /scr2/npk/PYTHON/SEDMr/Wavelength.py rough --hgfits Hg.fits --hgcat cat_Hg.fits.txt --dome dome.fits_segments.npy --outname rough 
@@ -234,6 +234,8 @@ def MF_single(objname, obsnum, file, standard=None):
     if standard is None: tp['STD'] = ''
     else: tp['STD'] = "--std %s" % (standard)
     tp['flexname'] = "flex_bs_crr_b_%s.npy" % (file.rstrip(".fits"))
+    # DROP Flexure for now
+    tp['flexname'] = ""
     first = '''# %(outname)s
 %(outname)s: cube.npy %(flexname)s %(obsfile)s.gz
 \t$(EXTSINGLE) cube.npy --A %(obsfile)s.gz --outname %(outname)s %(STD)s --flat_correction flat-dome-700to900.npy
@@ -268,22 +270,6 @@ def MF_AB(objname, obsnum, A, B):
     return '''# %(outname)s\n%(outname)s: cube.npy %(A)s.gz %(B)s.gz %(flexname)s
 \t$(EXTPAIR) cube.npy --A %(A)s.gz --B %(B)s.gz --outname %(outname)s --flat_correction flat-dome-700to900.npy\n\n''' %  tp, "%(outname)s " % tp
 
-
-def MF_ABCD(objname, obsnum, files): 
-    '''Create the MF entry for an A-B observation'''
-
-    A,B,C,D = files
-    tp = {'objname': objname, 'A': A, 'B': B, 'C': C, 'D': D}
-    if obsnum == 1: tp['num'] = ''
-    else: tp['num'] = '_obs%i' % obsnum
-    tp['outname'] = "%(objname)s%(num)s.npy" % tp
-    tp['flexname'] = "flex_%s.npy flex_%s.npy flex_%s.npy flex_%s.npy" % (
-        A.rstrip('.fits'), 
-        B.rstrip('.fits'),
-        C.rstrip('.fits'),
-        D.rstrip('.fits'))
-    return '''%(outname)s: fine.npy %(A)s %(B)s %(C)s %(D)s %(flexname)s
-\t$(EXTPAIR) fine.npy --A %(A)s --B %(B)s --C %(C)s --D %(D)s --outname %(outname)s \n''' %  tp, "%(outname)s" % tp
 
 
 
@@ -368,7 +354,7 @@ def to_makefile(objs, calibs):
 
     f = open("Makefile", "w")
     clean = "\nclean:\n\trm %s %s\n\n" % (all, stds)
-    corr = "\nstd-correction.npy:\n\t$(ATM) CREATE --outname std-correction.npy --files spectrum_STD*npy \n\n" 
+    corr = "\nstd-correction.npy:\n\t$(ATM) CREATE --outname std-correction.npy --files s*_STD*npy \n\n" 
 
     f.write(preamble + "stds: std-correction.npy\n\n" +
         "\nall: stds %s %s" % (all, clean) + "\n\n" +

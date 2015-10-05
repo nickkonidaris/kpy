@@ -1,6 +1,8 @@
 
 import argparse, os, sys
 import numpy as np
+import scipy.stats
+import scipy.signal
 import pylab as pl
 import pyfits as pf
 import datetime
@@ -29,15 +31,17 @@ def handle_create(outname=None, filelist=[]):
         except:
             raise Exception("Not passed a spectrum file, the file should start with spectrum_")
         
-        # Convert file named spectrum_STD-nnnn_obs* to a name compaitable
+        # Convert file named sp_STD-nnnn_obs* to a name compaitable
         # with Standards.py
-        pred = file[13:].rstrip()
+        pred = file.lstrip("spectrum_STD-")
+        pred = pred.lstrip("sp_STD-")
         pred = pred.split("_")[0]
         pred = pred.lower().replace("+","").replace("-","_")
-        print pred, pred in SS.Standards
+        print file, pred, pred in SS.Standards
 
         if pred not in SS.Standards:
-            raise exception("File named '%s' is reduced to '%s' and no such standard seems to exist."  % (file, pred))
+            print "File named '%s' is reduced to '%s' and no such standard seems to exist."  % (file, pred)
+            continue
 
 
         ff = interp1d(data['nm'], data['ph_10m_nm'], bounds_error=False)
@@ -63,7 +67,7 @@ def handle_create(outname=None, filelist=[]):
 
     
     roi = (ll > 900) & (ll < 1000)
-    the_corr = np.median(erg_s_cm2_ang,0)
+    the_corr = scipy.stats.nanmedian(erg_s_cm2_ang,0)
     if not np.isfinite(the_corr).all():
         # Fit polynomial to extrapolate correction
         redend = (ll > 800) & (ll < 915)
@@ -85,13 +89,14 @@ def handle_create(outname=None, filelist=[]):
         to_fix = list(line_ROI)
         the_corr[to_fix] = fit(ll[to_fix])
 
+    the_corr = scipy.signal.savgol_filter(the_corr, 3, 1)
 
 
     # Plot data
     pl.figure(1)
     pl.clf()
     pl.grid(True)
-    pl.ylim(1e-20,1e-16)
+    pl.ylim(1e-20,1e-15)
     pl.semilogy(ll, the_corr, linewidth=4)
     for ix,e in enumerate(erg_s_cm2_ang):
         pl.semilogy(ll, e*corr_vals[ix]/np.mean(corr_vals))
