@@ -131,18 +131,18 @@ def identify_observations(headers):
 make_preamble = '''
 
 
-PY = /home/npk/spy
-PYC = /scr2/npk/PYTHON/SEDM
+PY = ~/spy
+PYC = ~/kpy/SEDM
 EXTSINGLE =  $(PY) $(PYC)r/Extracter.py 
-ATM =  ~/spy /scr2/npk/PYTHON/SEDMr/AtmCorr.py 
-EXTPAIR =  ~/spy /scr2/npk/PYTHON/SEDMr/Extracter.py 
-FLEXCMD = ~/spy /scr2/npk//PYTHON/SEDMr/Flexure.py
-DEBIAS = ~/spy /scr2/npk//PYTHON/SEDMr/Debias.py
-IMCOMBINE = ~/spy /scr2/npk//PYTHON/SEDMr/Imcombine.py
+ATM =  ~/spy $(PYC)r/AtmCorr.py 
+EXTPAIR =  ~/spy $(PYC)r/Extracter.py 
+FLEXCMD = ~/spy $(PYC)r/Flexure.py
+DEBIAS = ~/spy $(PYC)r/Debias.py
+IMCOMBINE = ~/spy $(PYC)r/Imcombine.py
 
 BSUB = $(PY) $(PYC)/Bias.py
 BGDSUB =  $(PY) $(PYC)r/SubtractBackground.py
-CRRSUB =  /scr2/npk/Ureka/variants/common/bin/PyCosmic --fwhm=3 --iter 4 --rlim 1.8 --siglim 8
+CRRSUB =  $(UR_DIR)/variants/common/bin/PyCosmic --fwhm=3 --iter 4 --rlim 1.8 --siglim 8
 
 SRCS = $(wildcard ifu*fits)
 BIAS = $(addprefix b_,$(SRCS))
@@ -167,22 +167,22 @@ $(BACK):
     
 
 seg_dome.fits: dome.fits
-	~/spy /scr2/npk/PYTHON/SEDMr/SexLamps.py dome.fits
+	~/spy $(PYC)r/SexLamps.py dome.fits
 
 seg_Hg.fits: Hg.fits
-	~/spy /scr2/npk/PYTHON/SEDMr/SexSpectra.py Hg.fits
+	~/spy $(PYC)r/SexSpectra.py Hg.fits
 
 dome.fits_segments.npy: seg_dome.fits
-	~/spy /scr2/npk/PYTHON/SEDMr/FindSpectra.py seg_dome.fits dome.fits dome.fits_segments --order 1
+	~/spy $(PYC)r/FindSpectra.py seg_dome.fits dome.fits dome.fits_segments --order 1
 
 rough.npy: dome.fits_segments.npy seg_Hg.fits
-	~/spy /scr2/npk/PYTHON/SEDMr/Wavelength.py rough --hgfits Hg.fits --hgcat cat_Hg.fits.txt --dome dome.fits_segments.npy --outname rough 
+	~/spy $(PYC)r/Wavelength.py rough --hgfits Hg.fits --hgcat cat_Hg.fits.txt --dome dome.fits_segments.npy --outname rough 
 
 fine.npy: rough.npy
-	~/spy /scr2/npk/PYTHON/SEDMr/Wavelength.py fine --xefits Xe.fits --hgfits Hg.fits --hgassoc assoc_Hg.npy --outname fine
+	~/spy $(PYC)r/Wavelength.py fine --xefits Xe.fits --hgfits Hg.fits --hgassoc assoc_Hg.npy --outname fine
 
 cube.npy: fine.npy
-	~/spy /scr2/npk/PYTHON/SEDMr/Cube.py fine.npy --step make --outname cube.npy
+	~/spy $(PYC)r/Cube.py fine.npy --step make --outname cube.npy
 
 bs_twilight.fits.gz: twilight.fits fine.npy
 	$(BGDSUB) fine.npy twilight.fits
@@ -191,8 +191,8 @@ bs_dome.fits.gz: dome.fits fine.npy
 	$(BGDSUB) fine.npy dome.fits
 
 flat-dome-700to900.npy: cube.npy dome.fits
-\t~/spy /scr2/npk/PYTHON/SEDMr/Extracter.py cube.npy --A dome.fits --outname dome
-\t~/spy /scr2/npk/PYTHON/SEDMr/Flat.py dome.npy
+\t~/spy $(PYC)r/Extracter.py cube.npy --A dome.fits --outname dome
+\t~/spy $(PYC)r/Flat.py dome.npy
     
 wave: fine.npy
 cube: cube.npy
@@ -241,7 +241,7 @@ def MF_single(objname, obsnum, file, standard=None):
 \t$(EXTSINGLE) cube.npy --A %(obsfile)s.gz --outname %(outname)s %(STD)s --flat_correction flat-dome-700to900.npy
 
 cube_%(outname)s.fits: %(outname)s
-\t~/spy /scr2/npk/PYTHON/SEDMr/Cube.py %(outname)s --step extract --outname cube_%(outname)s.fits
+\t~/spy $(PYC)r/Cube.py %(outname)s --step extract --outname cube_%(outname)s.fits
 ''' % tp
     second = '''corr_%(outname)s: %(outname)s
 \t$(ATM) CORR --A %(outname)s.gz --std %(objname)s --outname corr_%(outname)s\n''' %  tp
@@ -270,6 +270,22 @@ def MF_AB(objname, obsnum, A, B):
     return '''# %(outname)s\n%(outname)s: cube.npy %(A)s.gz %(B)s.gz %(flexname)s
 \t$(EXTPAIR) cube.npy --A %(A)s.gz --B %(B)s.gz --outname %(outname)s --flat_correction flat-dome-700to900.npy\n\n''' %  tp, "%(outname)s " % tp
 
+
+def MF_ABCD(objname, obsnum, files): 
+    '''Create the MF entry for an A-B observation'''
+
+    A,B,C,D = files
+    tp = {'objname': objname, 'A': A, 'B': B, 'C': C, 'D': D}
+    if obsnum == 1: tp['num'] = ''
+    else: tp['num'] = '_obs%i' % obsnum
+    tp['outname'] = "%(objname)s%(num)s.npy" % tp
+    tp['flexname'] = "flex_%s.npy flex_%s.npy flex_%s.npy flex_%s.npy" % (
+        A.rstrip('.fits'), 
+        B.rstrip('.fits'),
+        C.rstrip('.fits'),
+        D.rstrip('.fits'))
+    return '''%(outname)s: fine.npy %(A)s %(B)s %(C)s %(D)s %(flexname)s
+\t$(EXTPAIR) fine.npy --A %(A)s --B %(B)s --C %(C)s --D %(D)s --outname %(outname)s \n''' %  tp, "%(outname)s" % tp
 
 
 

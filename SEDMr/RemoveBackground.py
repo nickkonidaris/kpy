@@ -2,6 +2,7 @@ import argparse
 import numpy as np
 import tempfile
 import os
+import getpass
 import pyfits as pf
 
 
@@ -11,7 +12,7 @@ sex_params = \
 CATALOG_NAME     {catalog_name} # name of the output catalog
 CATALOG_TYPE     ASCII_HEAD     # NONE,ASCII,ASCII_HEAD, ASCII_SKYCAT,
                                 # ASCII_VOTABLE, FITS_1.0 or FITS_LDAC
-PARAMETERS_NAME  /tmp/sex.sex.param  # name of the file containing catalog contents
+PARAMETERS_NAME  /tmp/sex.{user}.param  # name of the file containing catalog contents
  
 #------------------------------- Extraction ----------------------------------
  
@@ -89,14 +90,15 @@ XML_NAME         sex.xml        # Filename for XML output
 
 def handle_path(path):
     name= os.path.basename(path)
+    user= getpass.getuser()
 
     c = sex_params.format(**{"catalog_name": "cat_%s.txt" % name, 
-        "output_name": name})
+	    "user": user, "output_name": name})
 
-    conf_file = open("/tmp/sedm_sex_conf.sex","w")
+    conf_file = open("/tmp/sedm_sex_%s_conf.sex" % user,"w")
     conf_file.write(c)
     conf_file.close()
-    os.system("sex -c /tmp/sedm_sex_conf.sex {0}".format(path))
+    os.system("sex -c /tmp/sedm_sex_{1}_conf.sex {0}".format(path,user))
 
 
 def remove(fname):
@@ -125,7 +127,9 @@ def grow(img):
 
 def go(paths):
 
-    f = open('/tmp/sex.sex.param', 'w')
+    user= getpass.getuser()
+
+    f = open("/tmp/sex.%s.param" % user, 'w')
     f.write("NUMBER\nX_IMAGE\nY_IMAGE\nFLUX_ISO\nISOAREA_IMAGE\n")
     f.close()
 
